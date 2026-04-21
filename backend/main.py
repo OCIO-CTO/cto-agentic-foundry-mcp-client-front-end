@@ -794,14 +794,15 @@ class ChatRequest(BaseModel):
     messages: list[ChatMessage]
 
 
-def mcp_tools_to_openai_tools():
-    """Convert MCP tools to OpenAI function calling format"""
+async def get_remote_tools():
+    """Fetch tools from remote MCP server asynchronously"""
+    from fastmcp import Client
     tools = []
 
-    # Add remote MCP server tools
     try:
-        with MCPClient(REMOTE_MCP_URL) as client:
-            remote_tools = client.list_tools()
+        client = Client(REMOTE_MCP_URL)
+        async with client:
+            remote_tools = await client.list_tools()
             for tool in remote_tools:
                 tools.append({
                     "type": "function",
@@ -813,6 +814,27 @@ def mcp_tools_to_openai_tools():
                 })
     except Exception as e:
         print(f"Warning: Could not fetch remote MCP tools: {e}")
+
+    return tools
+
+
+def mcp_tools_to_openai_tools():
+    """Convert MCP tools to OpenAI function calling format"""
+    tools = []
+
+    # Add remote MCP server tools (run async function in sync context)
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # We're in an async context, can't use asyncio.run()
+            # Return empty for now, will be fetched in async endpoint
+            pass
+        else:
+            remote_tools = asyncio.run(get_remote_tools())
+            tools.extend(remote_tools)
+    except Exception as e:
+        print(f"Warning: Could not fetch remote MCP tools in sync context: {e}")
 
     # Manually define local tools in OpenAI format based on our MCP tools
     tools.append({
@@ -907,7 +929,7 @@ def mcp_tools_to_openai_tools():
     return tools
 
 
-def execute_tool(tool_name: str, arguments: dict):
+async def execute_tool(tool_name: str, arguments: dict):
     """Execute an MCP tool by name - either local or remote"""
     # Local tools
     if tool_name == "add_task":
@@ -922,19 +944,25 @@ def execute_tool(tool_name: str, arguments: dict):
         return get_statistics(**arguments)
 
     # Try remote MCP server
+    from fastmcp import Client
     try:
-        with MCPClient(REMOTE_MCP_URL) as client:
-            result = client.call_tool(tool_name, arguments)
+        client = Client(REMOTE_MCP_URL)
+        async with client:
+            result = await client.call_tool(tool_name, arguments)
             # Extract content from MCP response
             if hasattr(result, 'content'):
                 # Handle list of content items
                 if isinstance(result.content, list):
                     content_parts = []
                     for item in result.content:
-                        if hasattr(item, 'text'):
+                        # Check for TextContent type
+                        if hasattr(item, 'type') and item.type == 'text' and hasattr(item, 'text'):
                             content_parts.append(item.text)
                         elif isinstance(item, dict) and 'text' in item:
                             content_parts.append(item['text'])
+                        else:
+                            # For other content types, convert to string
+                            content_parts.append(str(item))
                     return {"result": "\n".join(content_parts) if content_parts else str(result.content)}
                 return {"result": str(result.content)}
             return result if isinstance(result, dict) else {"result": str(result)}
@@ -1005,8 +1033,10 @@ IMPORTANT: Follow the instructions in the skills above. Use them to guide your r
         }
         messages.insert(0, system_message)
 
-        # Get available tools in OpenAI format
+        # Get available tools in OpenAI format (including remote tools)
+        remote_tools = await get_remote_tools()
         tools = mcp_tools_to_openai_tools()
+        tools.extend(remote_tools)
 
         # Call Azure OpenAI with function calling (non-streaming)
         response = azure_client.chat.completions.create(
@@ -1052,7 +1082,7 @@ IMPORTANT: Follow the instructions in the skills above. Use them to guide your r
 
                 # Execute the tool
                 try:
-                    function_response = execute_tool(function_name, function_args)
+                    function_response = await execute_tool(function_name, function_args)
 
                     # Add tool response to messages
                     messages.append({
@@ -1070,7 +1100,7 @@ IMPORTANT: Follow the instructions in the skills above. Use them to guide your r
                     })
 
             # Stream the final response
-            async def generate_stream():
+            async def generate_stream_with_tools():
                 # Send UI resources first if any
                 if ui_resources:
                     yield f"data: {json.dumps({'type': 'ui_resources', 'resources': ui_resources})}\n\n"
@@ -1092,7 +1122,7 @@ IMPORTANT: Follow the instructions in the skills above. Use them to guide your r
                 # Signal end of stream
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
-            return StreamingResponse(generate_stream(), media_type="text/event-stream")
+            return StreamingResponse(generate_stream_with_tools(), media_type="text/event-stream")
         else:
             # No tool calls, stream the response directly
             async def generate_stream():
