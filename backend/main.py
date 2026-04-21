@@ -9,6 +9,9 @@ from fastapi.responses import StreamingResponse, Response
 from fastmcp import FastMCP, Client
 from fastmcp.server import create_proxy
 from openai import AzureOpenAI
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 import httpx
 import uvicorn
 from dotenv import load_dotenv
@@ -35,6 +38,8 @@ PORT = int(os.getenv("PORT", "8000"))
 API_KEY = os.getenv("API_KEY", "")
 OPENAI_TIMEOUT = int(os.getenv("OPENAI_TIMEOUT", "30"))
 MAX_TOOL_ITERATIONS = int(os.getenv("MAX_TOOL_ITERATIONS", "5"))  # Prevent infinite loops
+RATE_LIMIT = os.getenv("RATE_LIMIT", "10/minute")  # Rate limit per IP
+MAX_REQUEST_SIZE = int(os.getenv("MAX_REQUEST_SIZE", "1048576"))  # 1MB default
 
 # Simple logging
 logging.basicConfig(level=logging.INFO)
@@ -208,6 +213,11 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Rate limiting
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -215,6 +225,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type", "X-API-Key"],
+    max_age=600  # Cache preflight requests for 10 minutes
 )
 
 
@@ -260,6 +271,7 @@ async def get_background_image(request: Request):
 
 
 @app.post("/chat")
+@limiter.limit(RATE_LIMIT)
 async def chat(
     request: Request,
     chat_request: dict,
@@ -270,9 +282,18 @@ async def chat(
     if API_KEY and api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API key")
 
+    # Check request size
+    body = await request.body()
+    if len(body) > MAX_REQUEST_SIZE:
+        raise HTTPException(status_code=413, detail=f"Request too large. Maximum size: {MAX_REQUEST_SIZE} bytes")
+
     messages = chat_request.get("messages", [])
     if not messages:
         raise HTTPException(status_code=400, detail="Messages required")
+
+    # Validate message count
+    if len(messages) > 100:
+        raise HTTPException(status_code=400, detail="Too many messages. Maximum: 100")
 
     logger.info(f"Chat request received with {len(messages)} messages")
 

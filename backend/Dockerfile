@@ -1,5 +1,8 @@
 FROM python:3.11-slim
 
+# Create non-root user
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+
 WORKDIR /app
 
 # Copy requirements first for better caching
@@ -11,6 +14,12 @@ COPY main.py .
 
 # Copy static assets
 COPY assets/ ./assets/
+
+# Change ownership to non-root user
+RUN chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
 
 EXPOSE 8000
 
