@@ -9,11 +9,15 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code (single file!)
+# Copy application code
 COPY main.py .
+COPY speech_service.py .
 
 # Copy static assets
 COPY assets/ ./assets/
+
+# Copy tests directory (optional, for running tests in container)
+COPY tests/ ./tests/
 
 # Change ownership to non-root user
 RUN chown -R appuser:appuser /app

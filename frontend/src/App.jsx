@@ -3,6 +3,8 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import './App.css';
 import logoDark from './assets/logo_dark.png';
+import { VoiceInput } from './components/VoiceInput';
+import { TextToSpeech } from './components/TextToSpeech';
 
 const CHAT_URL = import.meta.env.VITE_CHAT_URL || 'http://localhost:8001/chat';
 const MCP_BASE_URL = import.meta.env.VITE_MCP_URL || 'http://localhost:8001';
@@ -351,17 +353,24 @@ function App() {
                 </div>
               )}
 
-              <div className="message-content">
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
-                  components={{
-                    a: ({ node, ...props }) => (
-                      <a {...props} target="_blank" rel="noopener noreferrer" />
-                    )
-                  }}
-                >
-                  {message.content}
-                </ReactMarkdown>
+              <div className="message-content-wrapper">
+                <div className="message-content">
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                      a: ({ node, ...props}) => (
+                        <a {...props} target="_blank" rel="noopener noreferrer" />
+                      )
+                    }}
+                  >
+                    {message.content}
+                  </ReactMarkdown>
+                </div>
+                {message.role === 'assistant' && message.content && (
+                  <div className="message-actions">
+                    <TextToSpeech text={message.content} />
+                  </div>
+                )}
               </div>
 
               {message.ui && (
@@ -403,6 +412,10 @@ function App() {
         </div>
 
         <form onSubmit={handleSubmit} className="composer">
+            <VoiceInput
+              onTranscript={(transcript) => setInput(transcript)}
+              disabled={isLoading}
+            />
             <input
               type="text"
               value={input}

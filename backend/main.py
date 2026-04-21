@@ -23,6 +23,7 @@ import random
 from typing import Optional, List, Dict, Any
 import asyncio
 from datetime import datetime
+from speech_service import synthesize_speech, get_speech_token
 
 load_dotenv()
 AZURE_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
@@ -353,6 +354,88 @@ async def chat(
             "Connection": "keep-alive"
         }
     )
+
+
+@app.post("/api/speech/synthesize")
+@limiter.limit(RATE_LIMIT)
+async def synthesize_text_to_speech(
+    request: Request,
+    payload: dict,
+    api_key: str = Header(None, alias="x-api-key")
+):
+    """
+    Convert text to speech audio
+
+    Request body:
+        {
+            "text": "Text to convert to speech",
+            "voice": "en-US-AriaNeural" (optional)
+        }
+
+    Returns:
+        Audio bytes (MP3 format)
+    """
+    if API_KEY and api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    text = payload.get("text")
+    if not text:
+        raise HTTPException(status_code=400, detail="Text is required")
+
+    if len(text) > 10000:
+        raise HTTPException(status_code=400, detail="Text too long. Maximum 10000 characters")
+
+    voice_name = payload.get("voice")
+
+    try:
+        logger.info(f"Synthesizing speech for text length: {len(text)}")
+        audio_data = synthesize_speech(text, voice_name)
+
+        return Response(
+            content=audio_data,
+            media_type="audio/mpeg",
+            headers={
+                "Content-Disposition": "inline",
+                "Cache-Control": "no-cache"
+            }
+        )
+    except ValueError as e:
+        logger.error(f"Speech synthesis error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error in speech synthesis: {str(e)}")
+        raise HTTPException(status_code=500, detail="Speech synthesis failed")
+
+
+@app.get("/api/speech/token")
+@limiter.limit(RATE_LIMIT)
+async def get_speech_auth_token(
+    request: Request,
+    api_key: str = Header(None, alias="x-api-key")
+):
+    """
+    Get authentication token for Azure Speech Services
+    Token is valid for 10 minutes
+
+    Returns:
+        {
+            "token": "auth_token",
+            "region": "usgovvirginia"
+        }
+    """
+    if API_KEY and api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    try:
+        logger.info("Generating speech authentication token")
+        token_data = get_speech_token()
+        return token_data
+    except ValueError as e:
+        logger.error(f"Token generation error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error generating token: {str(e)}")
+        raise HTTPException(status_code=500, detail="Token generation failed")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  backend-test:
+    build: ./backend
+    container_name: mcp-backend-test
+    env_file:
+      - ./backend/.env
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: python -m pytest tests/ -v --tb=short
+    networks:
+      - mcp-test-network
+
+  frontend-test:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.test
+    container_name: mcp-frontend-test
+    command: npm run test
+    networks:
+      - mcp-test-network
+
+networks:
+  mcp-test-network:
+    driver: bridge
