@@ -605,6 +605,74 @@ class CustomError(MCPProxyException):
 
 Edit the `@mcp.prompt` decorator function in [backend/main.py](backend/main.py).
 
+### Customizing UI Configuration from Your MCP Server
+
+The proxy can fetch UI configuration from your MCP server using MCP resources. This allows each MCP server to provide its own branding, placeholder questions, and background images.
+
+**On your MCP server (not the proxy), define these optional resources:**
+
+```python
+from fastmcp import FastMCP
+from mcp.types import ResourceContents
+import json
+
+mcp = FastMCP(name="Your Server")
+
+@mcp.resource("ui://config/placeholders")
+def get_placeholder_questions():
+    """Provide custom placeholder questions for the chat input"""
+    return ResourceContents(
+        uri="ui://config/placeholders",
+        mimeType="application/json",
+        text=json.dumps({
+            "questions": [
+                "What is FSIS and what does it do?",
+                "Search for establishments in Virginia",
+                "Show me recent violations"
+            ]
+        })
+    )
+
+@mcp.resource("ui://config/backgrounds")
+def get_background_images():
+    """Provide custom background image filenames"""
+    return ResourceContents(
+        uri="ui://config/backgrounds",
+        mimeType="application/json",
+        text=json.dumps({
+            "images": [
+                "cows.svg",
+                "field1.svg",
+                "tractor1.svg"
+            ]
+        })
+    )
+
+@mcp.resource("ui://config/branding")
+def get_branding():
+    """Provide custom branding configuration"""
+    return ResourceContents(
+        uri="ui://config/branding",
+        mimeType="application/json",
+        text=json.dumps({
+            "serviceName": "FSIS Assistant",
+            "primaryColor": "#007bff",
+            "logoUrl": "https://example.com/logo.png"
+        })
+    )
+```
+
+**How it works:**
+1. Frontend fetches `/api/config` from the proxy on startup
+2. Proxy reads `ui://config/*` resources from your MCP server
+3. Frontend uses those values or falls back to generic defaults
+4. All configuration is optional - if resources aren't provided, generic defaults are used
+
+**Resource URIs:**
+- `ui://config/placeholders` - Array of placeholder questions for input field
+- `ui://config/backgrounds` - Array of background image filenames (must exist in proxy's static folder)
+- `ui://config/branding` - Service name, colors, logos, etc.
+
 ### Adjusting Agentic Behavior
 
 Modify `MAX_TOOL_ITERATIONS` in [backend/config.py](backend/config.py) or environment variable.

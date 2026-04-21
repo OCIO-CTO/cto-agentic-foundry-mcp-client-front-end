@@ -50,6 +50,7 @@ class MCPService:
         self.mcp = mcp
         self._tools_cache: List[Dict[str, Any]] = []
         self._system_prompt_cache: Optional[str] = None
+        self._ui_config_cache: Optional[Dict[str, Any]] = None
 
     async def get_system_prompt(self) -> str:
         """
@@ -90,6 +91,74 @@ class MCPService:
     def _get_default_system_prompt(self) -> str:
         """Get default system prompt fallback"""
         return "You are a helpful assistant with access to search tools. Use them when appropriate."
+
+    async def get_ui_config(self) -> Dict[str, Any]:
+        """
+        Get UI configuration from MCP server.
+
+        Attempts to fetch UI configuration from MCP server resources:
+        - ui://config/placeholders - Placeholder questions for input
+        - ui://config/backgrounds - Background image names
+        - ui://config/branding - Service name, colors, etc.
+
+        Returns:
+            Dictionary with UI configuration or defaults
+
+        Uses cached value if available.
+        """
+        if self._ui_config_cache:
+            return self._ui_config_cache
+
+        config = {
+            "placeholders": None,
+            "backgrounds": None,
+            "branding": None
+        }
+
+        try:
+            async with Client(self.mcp) as client:
+                # Try to fetch placeholder questions
+                try:
+                    result = await client.read_resource("ui://config/placeholders")
+                    if result.contents and len(result.contents) > 0:
+                        import json
+                        content = result.contents[0]
+                        if hasattr(content, 'text'):
+                            config["placeholders"] = json.loads(content.text)
+                            logger.info("Fetched placeholder questions from MCP server")
+                except Exception as e:
+                    logger.debug(f"No placeholders resource available: {e}")
+
+                # Try to fetch background images
+                try:
+                    result = await client.read_resource("ui://config/backgrounds")
+                    if result.contents and len(result.contents) > 0:
+                        import json
+                        content = result.contents[0]
+                        if hasattr(content, 'text'):
+                            config["backgrounds"] = json.loads(content.text)
+                            logger.info("Fetched background images from MCP server")
+                except Exception as e:
+                    logger.debug(f"No backgrounds resource available: {e}")
+
+                # Try to fetch branding config
+                try:
+                    result = await client.read_resource("ui://config/branding")
+                    if result.contents and len(result.contents) > 0:
+                        import json
+                        content = result.contents[0]
+                        if hasattr(content, 'text'):
+                            config["branding"] = json.loads(content.text)
+                            logger.info("Fetched branding config from MCP server")
+                except Exception as e:
+                    logger.debug(f"No branding resource available: {e}")
+
+                self._ui_config_cache = config
+                return config
+
+        except Exception as e:
+            log_error(e, "Failed to fetch UI configuration")
+            return config
 
     async def list_tools(self) -> List[Dict[str, Any]]:
         """

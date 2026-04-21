@@ -154,6 +154,46 @@ async def root():
     }
 
 
+@app.get("/api/config")
+async def get_ui_config():
+    """
+    Get UI configuration from the connected MCP server.
+
+    Returns configuration for:
+    - Placeholder questions
+    - Background images
+    - Branding (service name, colors, etc.)
+
+    Falls back to defaults if MCP server doesn't provide config.
+    """
+    ui_config = await mcp_service.get_ui_config()
+
+    # Build response with defaults
+    response = {
+        "placeholders": ui_config.get("placeholders") or {
+            "questions": [
+                "Ask me anything...",
+                "What can you help me with?",
+                "How can I use the available tools?"
+            ]
+        },
+        "backgrounds": ui_config.get("backgrounds") or {
+            "images": [
+                "abstract1.svg",
+                "abstract2.svg",
+                "abstract3.svg",
+                "abstract4.svg"
+            ]
+        },
+        "branding": ui_config.get("branding") or {
+            "serviceName": config.MCP_SERVICE_NAME,
+            "version": "1.0.0"
+        }
+    }
+
+    return response
+
+
 def serve_static_svg(filename: str):
     """Serve static SVG files with proper caching"""
     allowed_files = ["cows.svg", "field1.svg", "tractor1.svg", "plant1.svg"]

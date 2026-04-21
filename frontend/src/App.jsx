@@ -21,18 +21,40 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSettled, setIsSettled] = useState(false);
   const [isInputFocused, setIsInputFocused] = useState(false);
+  const [uiConfig, setUiConfig] = useState(null);
   const messagesEndRef = useRef(null);
 
+  // Use dynamic placeholders from MCP server or fall back to constants
+  const placeholders = uiConfig?.placeholders?.questions || PLACEHOLDER_QUESTIONS;
+  const backgroundImages = uiConfig?.backgrounds?.images || BACKGROUND_IMAGES;
+
   // Typewriter effect for placeholder (stops when input is focused)
-  const typedPlaceholder = useTypewriter(PLACEHOLDER_QUESTIONS, !isInputFocused);
+  const typedPlaceholder = useTypewriter(placeholders, !isInputFocused);
+
+  // Fetch UI configuration from MCP server on startup
+  useEffect(() => {
+    const fetchConfig = async () => {
+      try {
+        const response = await fetch(`${API_CONFIG.BASE_URL}/api/config`);
+        if (response.ok) {
+          const config = await response.json();
+          setUiConfig(config);
+        }
+      } catch (error) {
+        console.error('Failed to fetch UI config:', error);
+        // Will fall back to constants
+      }
+    };
+    fetchConfig();
+  }, []);
 
   // Set random background image from available options
   useEffect(() => {
-    const randomBackground = BACKGROUND_IMAGES[Math.floor(Math.random() * BACKGROUND_IMAGES.length)];
+    const randomBackground = backgroundImages[Math.floor(Math.random() * backgroundImages.length)];
     const backgroundUrl = `${API_CONFIG.BASE_URL}/static/${randomBackground}`;
     document.body.style.backgroundImage = `url('${backgroundUrl}')`;
     document.body.classList.add('custom-bg');
-  }, []);
+  }, [backgroundImages]);
 
   // Handle UI settling animation
   useEffect(() => {
