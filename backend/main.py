@@ -37,7 +37,7 @@ CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3001").split(",")
 PORT = int(os.getenv("PORT", "8000"))
 API_KEY = os.getenv("API_KEY", "")
 OPENAI_TIMEOUT = int(os.getenv("OPENAI_TIMEOUT", "30"))
-MAX_TOOL_ITERATIONS = int(os.getenv("MAX_TOOL_ITERATIONS", "5"))  # Prevent infinite loops
+MAX_TOOL_ITERATIONS = int(os.getenv("MAX_TOOL_ITERATIONS", "10"))  # Prevent infinite loops
 RATE_LIMIT = os.getenv("RATE_LIMIT", "10/minute")  # Rate limit per IP
 MAX_REQUEST_SIZE = int(os.getenv("MAX_REQUEST_SIZE", "1048576"))  # 1MB default
 
