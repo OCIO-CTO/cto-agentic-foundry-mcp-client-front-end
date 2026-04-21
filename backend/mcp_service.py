@@ -7,8 +7,68 @@ from fastmcp import Client
 from exceptions import ToolExecutionError, log_error
 from pydantic import AnyUrl
 import logging
+import base64
 
 logger = logging.getLogger(__name__)
+
+
+def _convert_resource_to_data_url(resource) -> Optional[str]:
+    """
+    Convert an MCP resource (text or blob) to a data URL.
+
+    Args:
+        resource: MCP resource object with text/blob and mimeType
+
+    Returns:
+        Data URL string or None if resource is invalid
+    """
+    mime_type = getattr(resource, 'mimeType', 'text/html')
+
+    # Handle blob (already base64)
+    if hasattr(resource, 'blob'):
+        return f"data:{mime_type};base64,{resource.blob}"
+
+    # Handle text (needs encoding)
+    if hasattr(resource, 'text'):
+        encoded = base64.b64encode(resource.text.encode('utf-8')).decode('utf-8')
+        return f"data:{mime_type};base64,{encoded}"
+
+    return None
+
+
+async def _fetch_ui_resource(client, resource_uri: str) -> Optional[Dict[str, Any]]:
+    """
+    Fetch a UI resource by URI and convert to iframe component.
+
+    Args:
+        client: MCP client instance
+        resource_uri: URI of the resource (e.g., "ui://server/viz")
+
+    Returns:
+        UI component dict or None if fetch fails
+    """
+    try:
+        fetched = await client.read_resource(resource_uri)
+        # FastMCP client returns contents directly as a list
+        contents = fetched if isinstance(fetched, list) else getattr(fetched, 'contents', [])
+
+        if not contents:
+            return None
+
+        content = contents[0]
+        url = _convert_resource_to_data_url(content)
+
+        if url:
+            return {
+                'type': 'iframe',
+                'resourceUri': resource_uri,
+                'mimeType': getattr(content, 'mimeType', 'text/html'),
+                'url': url
+            }
+    except Exception as e:
+        logger.debug(f"Could not fetch UI resource {resource_uri}: {e}")
+
+    return None
 
 
 def serialize_for_json(obj: Any) -> Any:
@@ -49,6 +109,7 @@ class MCPService:
         """
         self.mcp = mcp
         self._tools_cache: List[Dict[str, Any]] = []
+        self._tools_metadata: Dict[str, Any] = {}  # Store full tool definitions with metadata
         self._system_prompt_cache: Optional[str] = None
         self._ui_config_cache: Optional[Dict[str, Any]] = None
 
@@ -188,7 +249,12 @@ class MCPService:
                     }
                     for tool in tools
                 ]
-                logger.info(f"Successfully cached {len(self._tools_cache)} tools")
+
+                # Store full tool definitions for metadata access
+                for tool in tools:
+                    self._tools_metadata[tool.name] = tool
+
+                logger.info(f"Cached {len(self._tools_cache)} tools")
                 return self._tools_cache
         except Exception as e:
             log_error(e, "Failed to fetch tools")
@@ -204,91 +270,57 @@ class MCPService:
 
         Returns:
             Tool execution result as dict with optional 'ui' field for MCP Apps
-
-        Raises:
-            ToolExecutionError: If tool execution fails
         """
         try:
             async with Client(self.mcp) as client:
                 logger.info(f"Executing tool: {tool_name}")
                 result = await client.call_tool(tool_name, arguments)
 
-                # Parse result content
-                if hasattr(result, 'content') and isinstance(result.content, list):
-                    content_parts = []
-                    ui_components = []
+                # Simple case: no content list
+                if not hasattr(result, 'content') or not isinstance(result.content, list):
+                    return {"result": str(getattr(result, 'content', result))}
 
-                    for item in result.content:
-                        # Handle text content
-                        if hasattr(item, 'type') and item.type == 'text' and hasattr(item, 'text'):
-                            content_parts.append(item.text)
-                        elif isinstance(item, dict) and 'text' in item:
-                            content_parts.append(item['text'])
-                        # Handle resource content (MCP Apps - iframes, images, etc.)
-                        elif hasattr(item, 'type') and item.type == 'resource':
-                            if hasattr(item, 'resource'):
-                                resource = item.resource
-                                resource_uri = str(resource.uri) if hasattr(resource, 'uri') else None
+                # Extract text and UI resources from content
+                content_parts = []
+                ui_components = []
 
-                                ui_component = {
-                                    'type': 'iframe',
-                                    'resourceUri': resource_uri,
-                                    'mimeType': resource.mimeType if hasattr(resource, 'mimeType') else None
-                                }
+                for item in result.content:
+                    item_type = getattr(item, 'type', None)
 
-                                # Check if resource has embedded content
-                                if hasattr(resource, 'blob'):
-                                    # Blob data already base64 encoded
-                                    mime_type = resource.mimeType if hasattr(resource, 'mimeType') else 'text/html'
-                                    ui_component['url'] = f"data:{mime_type};base64,{resource.blob}"
-                                elif hasattr(resource, 'text'):
-                                    # Text content needs encoding
-                                    import base64
-                                    mime_type = resource.mimeType if hasattr(resource, 'mimeType') else 'text/html'
-                                    encoded = base64.b64encode(resource.text.encode('utf-8')).decode('utf-8')
-                                    ui_component['url'] = f"data:{mime_type};base64,{encoded}"
-                                elif resource_uri and resource_uri.startswith('ui://'):
-                                    # URI-only resource - need to fetch via resources/read
-                                    try:
-                                        fetched = await client.read_resource(resource_uri)
-                                        if hasattr(fetched, 'contents') and len(fetched.contents) > 0:
-                                            content = fetched.contents[0]
-                                            if hasattr(content, 'text'):
-                                                import base64
-                                                mime_type = content.mimeType if hasattr(content, 'mimeType') else 'text/html'
-                                                encoded = base64.b64encode(content.text.encode('utf-8')).decode('utf-8')
-                                                ui_component['url'] = f"data:{mime_type};base64,{encoded}"
-                                            elif hasattr(content, 'blob'):
-                                                mime_type = content.mimeType if hasattr(content, 'mimeType') else 'text/html'
-                                                ui_component['url'] = f"data:{mime_type};base64,{content.blob}"
-                                            else:
-                                                logger.warning(f"Fetched resource has no text or blob: {resource_uri}")
-                                                continue
-                                        else:
-                                            logger.warning(f"Fetched resource has no contents: {resource_uri}")
-                                            continue
-                                    except Exception as e:
-                                        logger.error(f"Failed to fetch UI resource {resource_uri}: {e}")
-                                        continue
-                                else:
-                                    continue
+                    # Text content
+                    if item_type == 'text' and hasattr(item, 'text'):
+                        content_parts.append(item.text)
 
+                    # Resource content (UI components)
+                    elif item_type == 'resource' and hasattr(item, 'resource'):
+                        resource = item.resource
+                        resource_uri = str(resource.uri) if hasattr(resource, 'uri') else None
+
+                        # Try direct conversion (embedded content)
+                        url = _convert_resource_to_data_url(resource)
+                        if url:
+                            ui_components.append(serialize_for_json({
+                                'type': 'iframe',
+                                'resourceUri': resource_uri,
+                                'mimeType': getattr(resource, 'mimeType', 'text/html'),
+                                'url': url
+                            }))
+                        # If no embedded content, try fetching by URI
+                        elif resource_uri and resource_uri.startswith('ui://'):
+                            ui_component = await _fetch_ui_resource(client, resource_uri)
+                            if ui_component:
                                 ui_components.append(serialize_for_json(ui_component))
-                        else:
-                            content_parts.append(str(item))
 
-                    response = {
-                        "result": "\n".join(content_parts) if content_parts else str(result.content)
-                    }
+                # Build response
+                response = {
+                    "result": "\n".join(content_parts) if content_parts else "Tool executed"
+                }
 
-                    # Add UI components if any were found
-                    if ui_components:
-                        response["ui"] = ui_components
-                        logger.info(f"Returning {len(ui_components)} UI component(s)")
+                if ui_components:
+                    response["ui"] = ui_components
+                    logger.info(f"Returning {len(ui_components)} UI component(s)")
 
-                    return response
-
-                return {"result": str(result.content)} if hasattr(result, 'content') else {"result": str(result)}
+                return response
 
         except Exception as e:
             log_error(e, f"Tool execution failed for '{tool_name}'")
