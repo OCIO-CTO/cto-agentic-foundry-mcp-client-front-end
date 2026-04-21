@@ -1,12 +1,13 @@
 """
-Consolidated MCP Proxy Server
+Consolidated MCP Proxy Server with FastMCP 3.0
 Single-file implementation for simplicity
 """
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, Response
-from fastmcp import Client
+from fastmcp import FastMCP, Client
+from fastmcp.server import create_proxy
 from openai import AzureOpenAI
 import httpx
 import uvicorn
@@ -33,13 +34,47 @@ CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3001").split(",")
 PORT = int(os.getenv("PORT", "8000"))
 API_KEY = os.getenv("API_KEY", "")
 OPENAI_TIMEOUT = int(os.getenv("OPENAI_TIMEOUT", "30"))
+MAX_TOOL_ITERATIONS = int(os.getenv("MAX_TOOL_ITERATIONS", "5"))  # Prevent infinite loops
 
 # Simple logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Global MCP client and cache
-mcp_client: Optional[Client] = None
+# Create FastMCP server and mount remote FSIS server
+mcp = FastMCP("FSIS Proxy")
+
+# Mount the remote FSIS MCP server
+logger.info(f"Mounting remote MCP server: {REMOTE_MCP_URL}")
+mcp.mount(create_proxy(REMOTE_MCP_URL), namespace="fsis")
+
+# Add system prompt
+@mcp.prompt
+def system() -> str:
+    """System instructions for the LLM"""
+    return """You are an FSIS assistant with access to search and fetch tools.
+
+CRITICAL INSTRUCTION: You MUST NOT use your general knowledge or training data to answer questions. You are REQUIRED to use the search tool for every query to ensure accuracy and provide authoritative information from official FSIS sources.
+
+TOOL USAGE WORKFLOW - BE PERSISTENT:
+1. ALWAYS use fsis_search first to find relevant documents
+2. If search results contain document IDs, use fsis_fetch to retrieve complete document content
+3. If initial search results are insufficient, try alternative search queries with different keywords or phrasings
+4. Continue searching and fetching until you have enough information to provide a comprehensive answer
+5. ONLY after exhausting multiple search strategies (different keywords, broader/narrower terms) should you inform the user that information is not available
+6. NEVER rely on your pre-trained knowledge - base answers ONLY on search and fetch results
+
+SEARCH STRATEGY:
+- First search: Use the user's exact query terms
+- If insufficient: Try broader terms (e.g., "FSIS purpose" instead of "what is the purpose of FSIS")
+- If still insufficient: Try related terms or acronym expansion (e.g., "Food Safety and Inspection Service")
+- If still insufficient: Search for specific aspects mentioned in initial results
+- Use fsis_fetch on ANY document IDs returned in search results to get full content
+
+DO NOT give up after one search. You have multiple tool call iterations available - use them to thoroughly research the user's question before concluding information is unavailable.
+
+Your role is to be a persistent, thorough conduit for official FSIS information."""
+
+# Global cache
 tools_cache: List[Dict[str, Any]] = []
 
 
@@ -50,74 +85,92 @@ async def async_iter_wrapper(sync_iter):
         yield item
 
 
-# MCP Functions
-async def get_mcp_client() -> Client:
-    """Get or create MCP client"""
-    global mcp_client
-    if mcp_client is None:
-        mcp_client = Client(REMOTE_MCP_URL)
-        await mcp_client.__aenter__()
-        logger.info(f"Connected to MCP server at {REMOTE_MCP_URL}")
-    return mcp_client
+# MCP Functions using FastMCP server
+async def get_system_prompt() -> str:
+    """Get system prompt from FastMCP server"""
+    try:
+        async with Client(mcp) as client:
+            prompts = await client.list_prompts()
+            logger.info(f"Fetched {len(prompts)} prompts from FastMCP server")
+
+            # Look for the system prompt
+            for prompt in prompts:
+                if prompt.name == 'system':
+                    logger.info(f"Found system prompt: {prompt.name}")
+                    result = await client.get_prompt(prompt.name, {})
+                    if result.messages and len(result.messages) > 0:
+                        return result.messages[0].content.text if hasattr(result.messages[0].content, 'text') else str(result.messages[0].content)
+
+            logger.info("No system prompt found, using default")
+            return "You are a helpful assistant with access to search tools. Use them when appropriate."
+    except Exception as e:
+        logger.warning(f"Failed to fetch system prompt: {e}")
+        return "You are a helpful assistant with access to search tools. Use them when appropriate."
 
 
 async def list_mcp_tools() -> List[Dict[str, Any]]:
-    """Fetch tools from remote MCP server"""
+    """Fetch tools from FastMCP server (includes mounted remote tools)"""
     global tools_cache
     if tools_cache:
         return tools_cache
 
-    client = await get_mcp_client()
-    tools = await client.list_tools()
-    logger.info(f"Fetched {len(tools)} tools from MCP server")
+    try:
+        async with Client(mcp) as client:
+            tools = await client.list_tools()
+            logger.info(f"Fetched {len(tools)} tools from FastMCP server")
 
-    tools_cache = [
-        {
-            "type": "function",
-            "function": {
-                "name": tool.name,
-                "description": tool.description or f"Execute {tool.name}",
-                "parameters": tool.inputSchema
-            }
-        }
-        for tool in tools
-    ]
-    return tools_cache
+            tools_cache = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description or f"Execute {tool.name}",
+                        "parameters": tool.inputSchema
+                    }
+                }
+                for tool in tools
+            ]
+            logger.info(f"Successfully cached {len(tools_cache)} tools from FastMCP server")
+
+            # Log tool details for debugging
+            for tool in tools_cache:
+                logger.info(f"Tool: {tool['function']['name']}")
+                logger.info(f"  Description: {tool['function']['description']}")
+                logger.info(f"  Parameters: {tool['function']['parameters']}")
+
+            return tools_cache
+    except Exception as e:
+        logger.error(f"Failed to fetch tools: {e}")
+        return []
 
 
 async def execute_mcp_tool(tool_name: str, arguments: dict) -> Dict[str, Any]:
-    """Execute a remote MCP tool"""
-    client = await get_mcp_client()
-    logger.info(f"Executing tool '{tool_name}' with arguments: {arguments}")
+    """Execute a tool via FastMCP server"""
+    try:
+        async with Client(mcp) as client:
+            logger.info(f"Executing tool '{tool_name}' with arguments: {arguments}")
+            result = await client.call_tool(tool_name, arguments)
 
-    result = await client.call_tool(tool_name, arguments)
+            # Log the raw result to see what we're getting
+            logger.info(f"Tool result type: {type(result)}")
+            logger.info(f"Tool result content: {result.content if hasattr(result, 'content') else result}")
 
-    # Extract content from MCP response
-    if hasattr(result, 'content') and isinstance(result.content, list):
-        content_parts = []
-        for item in result.content:
-            if hasattr(item, 'type') and item.type == 'text' and hasattr(item, 'text'):
-                content_parts.append(item.text)
-            elif isinstance(item, dict) and 'text' in item:
-                content_parts.append(item['text'])
-            else:
-                content_parts.append(str(item))
-        return {"result": "\n".join(content_parts) if content_parts else str(result.content)}
+            # Extract content from MCP response
+            if hasattr(result, 'content') and isinstance(result.content, list):
+                content_parts = []
+                for item in result.content:
+                    if hasattr(item, 'type') and item.type == 'text' and hasattr(item, 'text'):
+                        content_parts.append(item.text)
+                    elif isinstance(item, dict) and 'text' in item:
+                        content_parts.append(item['text'])
+                    else:
+                        content_parts.append(str(item))
+                return {"result": "\n".join(content_parts) if content_parts else str(result.content)}
 
-    return {"result": str(result.content)} if hasattr(result, 'content') else {"result": str(result)}
-
-
-async def close_mcp_client():
-    """Cleanup MCP client"""
-    global mcp_client
-    if mcp_client:
-        try:
-            await mcp_client.__aexit__(None, None, None)
-            logger.info("MCP client connection closed")
-        except Exception as e:
-            logger.error(f"Error closing MCP client: {e}")
-        finally:
-            mcp_client = None
+            return {"result": str(result.content)} if hasattr(result, 'content') else {"result": str(result)}
+    except Exception as e:
+        logger.error(f"Tool execution failed: {e}")
+        return {"error": str(e)}
 
 
 # OpenAI Setup
@@ -135,18 +188,17 @@ azure_client = AzureOpenAI(
 async def lifespan(app: FastAPI):
     """Manage application lifespan"""
     # Startup
-    logger.info("Starting MCP Proxy Server")
+    logger.info("Starting MCP Proxy Server with FastMCP 3.0")
     try:
         tools = await list_mcp_tools()
-        logger.info(f"Successfully cached {len(tools)} tools from MCP server")
+        logger.info(f"Successfully cached {len(tools)} tools from FastMCP server")
     except Exception as e:
-        logger.warning(f"MCP server unavailable on startup: {e}")
+        logger.warning(f"FastMCP server unavailable on startup: {e}")
 
     yield
 
     # Shutdown
     logger.info("Shutting down MCP Proxy Server")
-    await close_mcp_client()
 
 
 app = FastAPI(
@@ -224,108 +276,124 @@ async def chat(
 
     logger.info(f"Chat request received with {len(messages)} messages")
 
-    # Fetch tools from MCP server
+    # Fetch tools and system prompt from MCP server
     try:
         tools = await list_mcp_tools()
+        system_prompt_content = await get_system_prompt()
     except Exception as e:
         logger.warning(f"MCP server unavailable: {e}")
         tools = []
+        system_prompt_content = "You are a helpful assistant with access to search tools. Use them when appropriate."
 
     # Build messages with system prompt
     system_message = {
         "role": "system",
-        "content": "You are a helpful assistant with access to search tools. Use them when appropriate."
+        "content": system_prompt_content
     }
     full_messages = [system_message] + messages
 
     async def generate_stream():
-        """Generate Server-Sent Events stream"""
+        """Generate Server-Sent Events stream with agentic loop"""
         try:
-            # First, make a non-streaming call to check for tool calls
-            initial_response = azure_client.chat.completions.create(
-                model=AZURE_DEPLOYMENT,
-                messages=full_messages,
-                tools=tools if tools else None,
-                tool_choice="auto" if tools else None,
-                stream=False
-            )
+            iteration = 0
 
-            response_message = initial_response.choices[0].message
-            tool_calls = response_message.tool_calls
+            # Agentic loop: Keep calling LLM until it stops requesting tools
+            while iteration < MAX_TOOL_ITERATIONS:
+                iteration += 1
+                logger.info(f"Agentic loop iteration {iteration}/{MAX_TOOL_ITERATIONS}")
 
-            # If there are tool calls, execute them ONCE and store results
-            if tool_calls:
-                tool_results = {}
-
-                for tc in tool_calls:
-                    # Parse arguments once
-                    args = json.loads(tc.function.arguments)
-
-                    # Send tool call start event with parsed arguments
-                    yield f"data: {json.dumps({'type': 'tool_call_start', 'tool': {'id': tc.id, 'name': tc.function.name, 'arguments': args}})}\n\n"
-
-                    try:
-                        logger.info(f"Executing tool: {tc.function.name}")
-                        result = await execute_mcp_tool(tc.function.name, args)
-                        tool_results[tc.id] = result
-                        yield f"data: {json.dumps({'type': 'tool_result', 'tool_id': tc.id, 'result': result})}\n\n"
-                    except Exception as e:
-                        logger.error(f"Tool execution failed: {e}")
-                        error_result = {"error": str(e)}
-                        tool_results[tc.id] = error_result
-                        yield f"data: {json.dumps({'type': 'tool_result', 'tool_id': tc.id, 'result': error_result})}\n\n"
-
-                # Add assistant message with tool calls
-                full_messages.append({
-                    "role": "assistant",
-                    "content": response_message.content,
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments
-                            }
-                        } for tc in tool_calls
-                    ]
-                })
-
-                # Reuse stored tool results
-                for tc in tool_calls:
-                    full_messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": json.dumps(tool_results[tc.id])
-                    })
-
-                # Stream final response
-                stream = azure_client.chat.completions.create(
+                # Call LLM with current conversation history
+                response = azure_client.chat.completions.create(
                     model=AZURE_DEPLOYMENT,
                     messages=full_messages,
-                    stream=True
+                    tools=tools if tools else None,
+                    tool_choice="auto" if tools else None,
+                    stream=False
                 )
-            else:
-                # No tool calls, just stream the response
-                if response_message.content:
-                    yield f"data: {json.dumps({'type': 'content', 'content': response_message.content})}\n\n"
+
+                response_message = response.choices[0].message
+                tool_calls = response_message.tool_calls
+
+                # If LLM wants to call tools, execute them
+                if tool_calls:
+                    logger.info(f"LLM requested {len(tool_calls)} tool call(s)")
+                    tool_results = {}
+
+                    for tc in tool_calls:
+                        # Parse arguments
+                        args = json.loads(tc.function.arguments)
+
+                        # Send tool call start event
+                        yield f"data: {json.dumps({'type': 'tool_call_start', 'tool': {'id': tc.id, 'name': tc.function.name, 'arguments': args}})}\n\n"
+
+                        try:
+                            logger.info(f"Executing tool: {tc.function.name}")
+                            result = await execute_mcp_tool(tc.function.name, args)
+                            tool_results[tc.id] = result
+                            yield f"data: {json.dumps({'type': 'tool_result', 'tool_id': tc.id, 'result': result})}\n\n"
+                        except Exception as e:
+                            logger.error(f"Tool execution failed: {e}")
+                            error_result = {"error": str(e)}
+                            tool_results[tc.id] = error_result
+                            yield f"data: {json.dumps({'type': 'tool_result', 'tool_id': tc.id, 'result': error_result})}\n\n"
+
+                    # Add assistant message with tool calls to conversation history
+                    full_messages.append({
+                        "role": "assistant",
+                        "content": response_message.content,
+                        "tool_calls": [
+                            {
+                                "id": tc.id,
+                                "type": "function",
+                                "function": {
+                                    "name": tc.function.name,
+                                    "arguments": tc.function.arguments
+                                }
+                            } for tc in tool_calls
+                        ]
+                    })
+
+                    # Add tool results to conversation history
+                    for tc in tool_calls:
+                        full_messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": json.dumps(tool_results[tc.id])
+                        })
+
+                    # Continue loop - LLM will analyze tool results and decide next action
+                    continue
+
+                # No tool calls - LLM has final answer, stream it to user
+                else:
+                    logger.info("LLM provided final answer, streaming response")
+
+                    # If there's content in the non-streaming response, use it
+                    if response_message.content:
+                        yield f"data: {json.dumps({'type': 'content', 'content': response_message.content})}\n\n"
+                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                        return
+
+                    # Otherwise, make a streaming call for the final response
+                    stream = azure_client.chat.completions.create(
+                        model=AZURE_DEPLOYMENT,
+                        messages=full_messages,
+                        stream=True
+                    )
+
+                    # Stream the content
+                    async for chunk in async_iter_wrapper(stream):
+                        if chunk.choices and len(chunk.choices) > 0:
+                            delta = chunk.choices[0].delta
+                            if delta.content:
+                                yield f"data: {json.dumps({'type': 'content', 'content': delta.content})}\n\n"
+
                     yield f"data: {json.dumps({'type': 'done'})}\n\n"
                     return
 
-                # Stream if no content in initial response
-                stream = azure_client.chat.completions.create(
-                    model=AZURE_DEPLOYMENT,
-                    messages=full_messages,
-                    stream=True
-                )
-
-            # Stream the content
-            async for chunk in async_iter_wrapper(stream):
-                if chunk.choices and len(chunk.choices) > 0:
-                    delta = chunk.choices[0].delta
-                    if delta.content:
-                        yield f"data: {json.dumps({'type': 'content', 'content': delta.content})}\n\n"
-
+            # Max iterations reached
+            logger.warning(f"Max tool iterations ({MAX_TOOL_ITERATIONS}) reached")
+            yield f"data: {json.dumps({'type': 'content', 'content': 'I apologize, but I reached the maximum number of tool calls while trying to answer your question. Please try rephrasing your question or asking something more specific.'})}\n\n"
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
         except Exception as e:

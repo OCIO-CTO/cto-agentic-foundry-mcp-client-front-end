@@ -57,7 +57,28 @@ function App() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isSettled, setIsSettled] = useState(false);
+  const [placeholderIndex, setPlaceholderIndex] = useState(0);
+  const [typedPlaceholder, setTypedPlaceholder] = useState('');
+  const [isInputFocused, setIsInputFocused] = useState(false);
   const messagesEndRef = useRef(null);
+
+  const placeholders = [
+    "What is FSIS and what does it do?",
+    "How does FSIS ensure food safety?",
+    "What are FSIS inspection regulations?",
+    "Tell me about FSIS recall procedures",
+    "What foods does FSIS regulate?",
+    "What are the requirements for meat processing facilities?",
+    "How does FSIS handle food contamination incidents?",
+    "What is the role of FSIS inspectors?",
+    "How can I report a food safety concern to FSIS?",
+    "What are FSIS guidelines for poultry inspection?",
+    "What labeling requirements does FSIS enforce?",
+    "How does FSIS work with international food safety standards?",
+    "What are FSIS regulations for organic meat products?",
+    "How does FSIS conduct pathogen testing?",
+    "What training do FSIS inspectors receive?"
+  ];
 
   // Set custom background image if provided
   useEffect(() => {
@@ -100,6 +121,32 @@ function App() {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Typewriter effect for placeholder (stops when input is focused)
+  useEffect(() => {
+    if (isInputFocused) return; // Stop typing when focused
+
+    const currentText = placeholders[placeholderIndex];
+    const typingSpeed = 50; // ms per character when typing
+    const pauseAfterTyping = 2500; // pause after fully typed before clearing
+
+    let timeout;
+
+    if (typedPlaceholder.length < currentText.length) {
+      // Typing
+      timeout = setTimeout(() => {
+        setTypedPlaceholder(currentText.slice(0, typedPlaceholder.length + 1));
+      }, typingSpeed);
+    } else if (typedPlaceholder.length === currentText.length) {
+      // Pause after typing complete, then clear and move to next
+      timeout = setTimeout(() => {
+        setTypedPlaceholder('');
+        setPlaceholderIndex((prev) => (prev + 1) % placeholders.length);
+      }, pauseAfterTyping);
+    }
+
+    return () => clearTimeout(timeout);
+  }, [typedPlaceholder, placeholderIndex, placeholders, isInputFocused]);
 
   /**
    * Fetch MCP resource content by URI
@@ -309,7 +356,14 @@ function App() {
               )}
 
               <div className="message-content">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    a: ({ node, ...props }) => (
+                      <a {...props} target="_blank" rel="noopener noreferrer" />
+                    )
+                  }}
+                >
                   {message.content}
                 </ReactMarkdown>
               </div>
@@ -357,7 +411,12 @@ function App() {
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Type your message..."
+              onFocus={() => {
+                setIsInputFocused(true);
+                setTypedPlaceholder('');
+              }}
+              onBlur={() => setIsInputFocused(false)}
+              placeholder={typedPlaceholder}
               disabled={isLoading}
               className="composer-input"
             />
