@@ -27,28 +27,27 @@ services:
           memory: 512M
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        - VITE_MCP_URL=http://localhost:8001
+        - VITE_CHAT_URL=http://localhost:8001/chat
     container_name: mcp-frontend
     ports:
-      - "3001:3000"
-    environment:
-      - VITE_MCP_URL=http://localhost:8001
-      - VITE_CHAT_URL=http://localhost:8001/chat
+      - "3001:80"
     networks:
       - mcp-network
     depends_on:
       backend:
         condition: service_healthy
-    stdin_open: true
-    tty: true
     deploy:
       resources:
         limits:
           cpus: '0.5'
-          memory: 512M
+          memory: 256M
         reservations:
           cpus: '0.25'
-          memory: 256M
+          memory: 128M
 
 networks:
   mcp-network:

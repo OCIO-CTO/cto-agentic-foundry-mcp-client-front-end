@@ -125,12 +125,19 @@ class ChatService:
                         ]
                     })
 
-                    # Append tool results
+                    # Append tool results (send only text to LLM, strip UI resources)
                     for tc in tool_calls:
+                        result = tool_results[tc.id]
+                        # Extract only the 'result' text field for LLM, exclude UI components
+                        if isinstance(result, dict) and 'result' in result:
+                            content = result['result']
+                        else:
+                            content = json.dumps(result)
+
                         full_messages.append({
                             "role": "tool",
                             "tool_call_id": tc.id,
-                            "content": json.dumps(tool_results[tc.id])
+                            "content": content
                         })
 
                     continue
