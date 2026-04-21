@@ -6,7 +6,6 @@
 export const API_CONFIG = {
   CHAT_URL: import.meta.env.VITE_CHAT_URL || 'http://localhost:8001/chat',
   BASE_URL: import.meta.env.VITE_MCP_URL || 'http://localhost:8001',
-  BACKGROUND_IMAGE: import.meta.env.VITE_BACKGROUND_IMAGE || '',
 };
 
 // Placeholder questions for the input field

@@ -13,6 +13,7 @@ import {
   MESSAGE_ROLES,
   SSE_EVENT_TYPES,
   SPEECH_LANGUAGES,
+  BACKGROUND_IMAGES,
 } from './config/constants';
 
 function App() {
@@ -26,13 +27,12 @@ function App() {
   // Typewriter effect for placeholder (stops when input is focused)
   const typedPlaceholder = useTypewriter(PLACEHOLDER_QUESTIONS, !isInputFocused);
 
-  // Set background image if configured
+  // Set random background image from available options
   useEffect(() => {
-    if (API_CONFIG.BACKGROUND_IMAGE) {
-      const randomParam = `?v=${Math.random()}`;
-      document.body.style.backgroundImage = `url('${API_CONFIG.BACKGROUND_IMAGE}${randomParam}')`;
-      document.body.classList.add('custom-bg');
-    }
+    const randomBackground = BACKGROUND_IMAGES[Math.floor(Math.random() * BACKGROUND_IMAGES.length)];
+    const backgroundUrl = `${API_CONFIG.BASE_URL}/static/${randomBackground}`;
+    document.body.style.backgroundImage = `url('${backgroundUrl}')`;
+    document.body.classList.add('custom-bg');
   }, []);
 
   // Handle UI settling animation

@@ -5,10 +5,12 @@ export function TextToSpeech({ text, disabled = false }) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [localError, setLocalError] = useState(null);
 
-  const { synthesizeSpeech, isInitialized, error: speechError } = useSpeechService();
+  const { synthesizeSpeech, stopSpeech, isInitialized, error: speechError } = useSpeechService();
 
-  const handleSpeak = () => {
+  const handleClick = () => {
     if (isPlaying) {
+      stopSpeech();
+      setIsPlaying(false);
       return;
     }
 
@@ -40,11 +42,11 @@ export function TextToSpeech({ text, disabled = false }) {
   return (
     <div className="tts-container">
       <button
-        onClick={handleSpeak}
-        disabled={!canUse || isPlaying}
+        onClick={handleClick}
+        disabled={!canUse}
         className={`tts-button ${isPlaying ? 'tts-playing' : ''} ${displayError ? 'tts-error' : ''}`}
-        title={isPlaying ? 'Playing...' : 'Read aloud'}
-        aria-label={isPlaying ? 'Playing audio' : 'Read message aloud'}
+        title={isPlaying ? 'Stop speaking' : 'Read aloud'}
+        aria-label={isPlaying ? 'Stop audio playback' : 'Read message aloud'}
       >
         <svg
           width="16"

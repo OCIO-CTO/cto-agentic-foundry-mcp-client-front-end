@@ -12,14 +12,36 @@ export function useSpeechService() {
   const speechConfigRef = useRef(null);
   const recognizerRef = useRef(null);
   const synthesizerRef = useRef(null);
+  const audioRef = useRef(null);
+  const tokenCacheRef = useRef(null);
 
   const fetchToken = useCallback(async () => {
+    const now = Date.now();
+
+    // Check if we have a cached token that's still valid (with 1 min buffer before expiry)
+    if (tokenCacheRef.current && tokenCacheRef.current.expiresAt > now) {
+      console.log('Using cached speech token');
+      return {
+        token: tokenCacheRef.current.token,
+        region: tokenCacheRef.current.region,
+      };
+    }
+
     try {
+      console.log('Fetching new speech token from backend');
       const response = await fetch(`${MCP_BASE_URL}/api/speech/token`);
       if (!response.ok) {
         throw new Error(`Failed to fetch token: ${response.statusText}`);
       }
       const data = await response.json();
+
+      // Cache token in memory only (expires in 10 min, we cache for 9 min)
+      tokenCacheRef.current = {
+        token: data.token,
+        region: data.region,
+        expiresAt: now + (9 * 60 * 1000), // 9 minutes from now
+      };
+
       return data;
     } catch (err) {
       console.error('Error fetching speech token:', err);
@@ -193,6 +215,15 @@ export function useSpeechService() {
     }
   }, []);
 
+  const stopSpeech = useCallback(() => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      audioRef.current = null;
+      setIsSpeaking(false);
+    }
+  }, []);
+
   const synthesizeSpeech = useCallback(async (text, onStart, onComplete, onError) => {
     if (!isInitialized || !speechConfigRef.current) {
       const err = new Error('Speech service not initialized');
@@ -216,10 +247,12 @@ export function useSpeechService() {
             const audioBlob = new Blob([result.audioData], { type: 'audio/mpeg' });
             const audioUrl = URL.createObjectURL(audioBlob);
             const audio = new Audio(audioUrl);
+            audioRef.current = audio;
 
             audio.onended = () => {
               setIsSpeaking(false);
               URL.revokeObjectURL(audioUrl);
+              audioRef.current = null;
               if (onComplete) onComplete();
             };
 
@@ -228,6 +261,7 @@ export function useSpeechService() {
               setIsSpeaking(false);
               setError('Audio playback failed');
               URL.revokeObjectURL(audioUrl);
+              audioRef.current = null;
               if (onError) onError(err);
             };
 
@@ -267,6 +301,7 @@ export function useSpeechService() {
     startRecognition,
     stopRecognition,
     synthesizeSpeech,
+    stopSpeech,
     reinitialize: initializeSpeech,
   };
 }

@@ -252,7 +252,6 @@ Uses React hooks for local state (no Redux/Zustand for chat state):
 **Frontend (environment variables):**
 - `VITE_MCP_URL`: Backend base URL (default: http://localhost:8001)
 - `VITE_CHAT_URL`: Chat endpoint URL (default: http://localhost:8001/chat)
-- `VITE_BACKGROUND_IMAGE`: Optional background image URL
 
 ### Docker Configuration
 

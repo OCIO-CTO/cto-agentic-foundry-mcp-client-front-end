@@ -148,15 +148,18 @@ async def root():
     }
 
 
-@app.get("/static/cows.svg")
-async def get_background_image(request: Request):
-    """Serve random background SVG image"""
-    backgrounds = ["cows.svg", "field1.svg", "tractor1.svg", "plant1.svg"]
-    selected = random.choice(backgrounds)
-    svg_path = Path(__file__).parent / "assets" / selected
+@app.get("/static/{filename}")
+async def get_static_file(filename: str):
+    """Serve static SVG files with proper caching"""
+    allowed_files = ["cows.svg", "field1.svg", "tractor1.svg", "plant1.svg"]
+
+    if filename not in allowed_files:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    svg_path = Path(__file__).parent / "assets" / filename
 
     if not svg_path.exists():
-        raise HTTPException(status_code=404, detail="Background image not found")
+        raise HTTPException(status_code=404, detail="File not found")
 
     with open(svg_path, 'r') as f:
         svg_content = f.read()
@@ -164,7 +167,7 @@ async def get_background_image(request: Request):
     return Response(
         content=svg_content,
         media_type="image/svg+xml",
-        headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
+        headers={"Cache-Control": "public, max-age=86400"}
     )
 
 
@@ -279,7 +282,7 @@ async def synthesize_text_to_speech(
 
 
 @app.get("/api/speech/token")
-@limiter.limit(config.RATE_LIMIT)
+@limiter.limit("30/minute")
 async def get_speech_auth_token(
     request: Request,
     api_key: str = Depends(verify_api_key)
