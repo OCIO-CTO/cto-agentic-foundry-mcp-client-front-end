@@ -118,7 +118,6 @@ Set `REMOTE_MCP_URL` to any MCP server that:
 
 For a server running on the Docker host, use `http://host.docker.internal:PORT/mcp`.
 
-See [CLAUDE.md](CLAUDE.md) for deeper architectural notes, MCP Apps implementation details, and troubleshooting.
 
 ## Key Environment Variables
 
