@@ -11,6 +11,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY main.py .
+COPY config.py .
+COPY auth.py .
+COPY exceptions.py .
+COPY mcp_service.py .
+COPY chat_service.py .
 COPY speech_service.py .
 
 # Copy static assets

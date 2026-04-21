@@ -81,24 +81,70 @@ docker-compose logs -f frontend
 - Frontend: http://localhost:3001
 - Backend: http://localhost:8001
 
+## Code Structure
+
+### Backend Architecture (Modular Services)
+
+The backend follows a modular architecture with separation of concerns:
+
+**Core Modules:**
+- [backend/config.py](backend/config.py) - Centralized configuration management with validation
+- [backend/auth.py](backend/auth.py) - Authentication utilities and FastAPI dependencies
+- [backend/exceptions.py](backend/exceptions.py) - Custom exception hierarchy with HTTP status codes
+- [backend/mcp_service.py](backend/mcp_service.py) - MCP client operations (tool listing, execution, caching)
+- [backend/chat_service.py](backend/chat_service.py) - Chat streaming and agentic loop logic
+- [backend/speech_service.py](backend/speech_service.py) - Azure Speech Services integration
+- [backend/main.py](backend/main.py) - FastAPI routes and application setup
+
+**Key Improvements:**
+- Single Responsibility Principle: Each module has one clear purpose
+- Dependency Injection: Services use config module, endpoints use auth dependencies
+- Custom Exceptions: Consistent error handling with proper HTTP status codes
+- Testability: Services can be tested in isolation
+- Reusability: Logic can be used across different contexts
+
+### Frontend Architecture (Component-Based)
+
+The frontend follows React best practices with modular components and hooks:
+
+**Structure:**
+```
+frontend/src/
+├── App.jsx                        # Main application component
+├── config/
+│   └── constants.js              # Configuration and constants
+├── api/
+│   └── client.js                 # API communication utilities
+├── utils/
+│   └── sse.js                    # SSE parsing and handling
+├── hooks/
+│   ├── useSpeechService.js       # Azure Speech SDK integration
+│   └── useTypewriter.js          # Typewriter effect logic
+└── components/
+    ├── Message.jsx               # Message display component
+    ├── ToolCallDrawer.jsx        # Tool execution display
+    ├── VoiceInput.jsx            # Microphone input
+    └── TextToSpeech.jsx          # Audio playback
+```
+
+**Key Improvements:**
+- Extracted reusable logic into custom hooks
+- Separated API logic from UI components
+- PropTypes for type safety
+- Better state management and data flow
+- Reduced App.jsx from 447 to 214 lines (-52%)
+
 ## Key Architecture Patterns
 
 ### 1. FastMCP 3.0 Proxy Pattern
 
-[backend/main.py](backend/main.py:43-45)
+[backend/main.py](backend/main.py)
 
-The backend mounts a remote MCP server using `create_proxy()`, making all remote tools available locally:
-
-```python
-mcp = FastMCP("FSIS Proxy")
-mcp.mount(create_proxy(REMOTE_MCP_URL), namespace="fsis")
-```
-
-Remote tools are prefixed with `fsis_` (e.g., `fsis_search`, `fsis_fetch`).
+The backend mounts a remote MCP server using `create_proxy()`, making all remote tools available locally. Remote tools are prefixed with `fsis_` (e.g., `fsis_search`, `fsis_fetch`).
 
 ### 2. Agentic Loop with Tool Persistence
 
-[backend/main.py](backend/main.py:257-341)
+[backend/chat_service.py](backend/chat_service.py)
 
 The `/chat` endpoint implements an agentic loop (MAX_TOOL_ITERATIONS=10) that:
 1. Sends messages to Azure OpenAI
@@ -106,11 +152,11 @@ The `/chat` endpoint implements an agentic loop (MAX_TOOL_ITERATIONS=10) that:
 3. Appends tool results to conversation history
 4. Loops back to step 1 until final answer or max iterations
 
-**Critical:** The system prompt at [backend/main.py](backend/main.py:46-70) instructs the LLM to be persistent and try multiple search strategies before giving up.
+**Critical:** The system prompt instructs the LLM to be persistent and try multiple search strategies before giving up.
 
 ### 3. Server-Sent Events (SSE) Streaming
 
-[backend/main.py](backend/main.py:255-355)
+[backend/chat_service.py](backend/chat_service.py) and [frontend/src/utils/sse.js](frontend/src/utils/sse.js)
 
 Real-time streaming to frontend with event types:
 - `tool_call_start`: Tool execution begins
@@ -118,19 +164,17 @@ Real-time streaming to frontend with event types:
 - `content`: LLM response tokens
 - `done`: Stream complete
 
-Frontend handles these events at [frontend/src/App.jsx](frontend/src/App.jsx:263-320).
-
 ### 4. System Prompt from FastMCP
 
-[backend/main.py](backend/main.py:77-95)
+[backend/main.py](backend/main.py)
 
 System prompts are defined as FastMCP prompts (`@mcp.prompt`) and fetched dynamically at runtime, allowing prompt changes without code deployment.
 
 ### 5. Tool Caching
 
-[backend/main.py](backend/main.py:98-124)
+[backend/mcp_service.py](backend/mcp_service.py)
 
-Tools from the remote MCP server are cached on startup to avoid repeated fetches. Cache is global (`tools_cache`).
+Tools from the remote MCP server are cached on startup to avoid repeated fetches. Cache is managed by the `MCPService` class.
 
 ### 6. Azure Speech Services Integration
 
@@ -167,36 +211,15 @@ The application integrates Azure Speech Services for real-time voice interaction
 - Token endpoint has rate limiting
 - CORS restrictions on all speech endpoints
 
-## Frontend Architecture
+## State Management
 
-### State Management
-
-[frontend/src/App.jsx](frontend/src/App.jsx:55-62)
+[frontend/src/App.jsx](frontend/src/App.jsx)
 
 Uses React hooks for local state (no Redux/Zustand for chat state):
 - `messages`: Chat history
 - `isLoading`: Request in progress
 - `input`: User input text
 - Tool calls are tracked per-message
-
-### SSE Stream Handling
-
-[frontend/src/App.jsx](frontend/src/App.jsx:243-321)
-
-The frontend reads SSE streams using `ReadableStream` API and updates UI in real-time:
-1. Parses `data:` lines as JSON
-2. Updates tool call drawers as tools execute
-3. Streams assistant response tokens
-4. Renders UI components on completion
-
-### Tool Call UI
-
-[frontend/src/App.jsx](frontend/src/App.jsx:11-52)
-
-`ToolCallDrawer` component shows:
-- Tool name with "Using..." (executing) or "Used" (complete)
-- Expandable drawer with arguments and results
-- Real-time updates as tools execute
 
 ## Configuration
 
@@ -246,19 +269,60 @@ The frontend reads SSE streams using `ReadableStream` API and updates UI in real
 
 ### Adding New MCP Tools
 
-Tools are defined on the remote MCP server. This proxy automatically discovers and exposes them.
+Tools are defined on the remote MCP server. This proxy automatically discovers and exposes them via [backend/mcp_service.py](backend/mcp_service.py).
+
+### Adding New Configuration
+
+Edit [backend/config.py](backend/config.py) to add new environment variables:
+```python
+class Config:
+    NEW_SETTING: str = os.getenv("NEW_SETTING", "default")
+```
+
+### Adding New API Endpoint
+
+Add routes to [backend/main.py](backend/main.py):
+```python
+@app.get("/api/new-endpoint")
+async def new_endpoint(api_key: str = Depends(verify_api_key)):
+    return {"status": "ok"}
+```
+
+### Adding Custom Exceptions
+
+Add to [backend/exceptions.py](backend/exceptions.py):
+```python
+class CustomError(MCPProxyException):
+    def __init__(self, message: str):
+        super().__init__(message, status_code=400)
+```
 
 ### Modifying System Prompt
 
-Edit the `@mcp.prompt` decorator function at [backend/main.py](backend/main.py:46-70).
+Edit the `@mcp.prompt` decorator function in [backend/main.py](backend/main.py).
 
 ### Adjusting Agentic Behavior
 
-Modify `MAX_TOOL_ITERATIONS` in environment or code at [backend/main.py](backend/main.py:37).
+Modify `MAX_TOOL_ITERATIONS` in [backend/config.py](backend/config.py) or environment variable.
+
+### Adding Frontend Components
+
+Create new components in `frontend/src/components/` with PropTypes:
+```jsx
+import PropTypes from 'prop-types';
+
+export function NewComponent({ prop1 }) {
+  return <div>{prop1}</div>;
+}
+
+NewComponent.propTypes = {
+  prop1: PropTypes.string.isRequired,
+};
+```
 
 ### Styling Changes
 
-Edit [frontend/src/App.css](frontend/src/App.css) (note: there's also an [App.css.backup](frontend/src/App.css.backup)).
+Edit [frontend/src/App.css](frontend/src/App.css).
 
 ## Important Notes
 

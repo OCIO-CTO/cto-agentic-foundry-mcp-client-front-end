@@ -2,20 +2,13 @@
 Azure Speech Services Integration Module
 Provides text-to-speech and speech-to-text functionality
 """
-import os
 import logging
-from typing import Optional
+from typing import Optional, Dict
 import azure.cognitiveservices.speech as speechsdk
-from dotenv import load_dotenv
+from config import config
+from exceptions import SpeechServiceError, log_error
 
-load_dotenv()
 logger = logging.getLogger(__name__)
-
-AZURE_SPEECH_KEY = os.getenv("AZURE_SPEECH_KEY")
-AZURE_SPEECH_REGION = os.getenv("AZURE_SPEECH_REGION")
-
-if not AZURE_SPEECH_KEY or not AZURE_SPEECH_REGION:
-    logger.warning("Azure Speech Services credentials not configured")
 
 
 def get_speech_config() -> speechsdk.SpeechConfig:
@@ -26,14 +19,17 @@ def get_speech_config() -> speechsdk.SpeechConfig:
         speechsdk.SpeechConfig: Configured speech config object
 
     Raises:
-        ValueError: If credentials are not configured
+        SpeechServiceError: If credentials are not configured
     """
-    if not AZURE_SPEECH_KEY or not AZURE_SPEECH_REGION:
-        raise ValueError("Azure Speech Services credentials not configured. Set AZURE_SPEECH_KEY and AZURE_SPEECH_REGION environment variables.")
+    if not config.AZURE_SPEECH_KEY or not config.AZURE_SPEECH_REGION:
+        raise SpeechServiceError(
+            "Azure Speech Services credentials not configured. "
+            "Set AZURE_SPEECH_KEY and AZURE_SPEECH_REGION environment variables."
+        )
 
     speech_config = speechsdk.SpeechConfig(
-        subscription=AZURE_SPEECH_KEY,
-        region=AZURE_SPEECH_REGION
+        subscription=config.AZURE_SPEECH_KEY,
+        region=config.AZURE_SPEECH_REGION
     )
 
     # Set audio format for synthesis
@@ -57,16 +53,14 @@ def synthesize_speech(text: str, voice_name: Optional[str] = None) -> bytes:
         bytes: Audio data in MP3 format
 
     Raises:
-        ValueError: If credentials not configured or synthesis fails
+        SpeechServiceError: If credentials not configured or synthesis fails
     """
     try:
         speech_config = get_speech_config()
 
         # Set voice if specified
-        if voice_name:
-            speech_config.speech_synthesis_voice_name = voice_name
-        else:
-            speech_config.speech_synthesis_voice_name = "en-US-AriaNeural"
+        voice_name = voice_name or "en-US-AriaNeural"
+        speech_config.speech_synthesis_voice_name = voice_name
 
         # Create synthesizer with no audio output (we'll capture bytes)
         synthesizer = speechsdk.SpeechSynthesizer(
@@ -74,28 +68,33 @@ def synthesize_speech(text: str, voice_name: Optional[str] = None) -> bytes:
             audio_config=None  # None means in-memory result
         )
 
-        logger.info(f"Synthesizing speech for text: {text[:50]}...")
+        logger.info(f"Synthesizing speech for text (length: {len(text)}): {text[:50]}...")
         result = synthesizer.speak_text_async(text).get()
 
         if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
             logger.info(f"Speech synthesis completed, audio size: {len(result.audio_data)} bytes")
             return result.audio_data
+
         elif result.reason == speechsdk.ResultReason.Canceled:
             cancellation_details = result.cancellation_details
-            logger.error(f"Speech synthesis canceled: {cancellation_details.reason}")
+            error_msg = f"Speech synthesis canceled: {cancellation_details.reason}"
+
             if cancellation_details.reason == speechsdk.CancellationReason.Error:
+                error_msg = f"Speech synthesis failed: {cancellation_details.error_details}"
                 logger.error(f"Error details: {cancellation_details.error_details}")
-                raise ValueError(f"Speech synthesis failed: {cancellation_details.error_details}")
-            raise ValueError(f"Speech synthesis canceled: {cancellation_details.reason}")
+
+            raise SpeechServiceError(error_msg)
         else:
-            raise ValueError(f"Unexpected synthesis result: {result.reason}")
+            raise SpeechServiceError(f"Unexpected synthesis result: {result.reason}")
 
-    except Exception as e:
-        logger.error(f"Error in speech synthesis: {str(e)}")
+    except SpeechServiceError:
         raise
+    except Exception as e:
+        log_error(e, "Error in speech synthesis")
+        raise SpeechServiceError(f"Speech synthesis failed: {str(e)}")
 
 
-def get_speech_token() -> dict:
+def get_speech_token() -> Dict[str, str]:
     """
     Generate an authentication token for frontend Speech SDK usage
     Token is valid for 10 minutes
@@ -104,20 +103,17 @@ def get_speech_token() -> dict:
         dict: Contains 'token' and 'region' keys
 
     Raises:
-        ValueError: If credentials not configured or token fetch fails
+        SpeechServiceError: If credentials not configured or token fetch fails
     """
     try:
-        if not AZURE_SPEECH_KEY or not AZURE_SPEECH_REGION:
-            raise ValueError("Azure Speech Services credentials not configured")
+        if not config.AZURE_SPEECH_KEY or not config.AZURE_SPEECH_REGION:
+            raise SpeechServiceError("Azure Speech Services credentials not configured")
 
-        # For Azure Speech Services, we can return the key directly for token exchange
-        # The frontend SDK will exchange this for a proper token
-        # In production, you might want to call the token endpoint directly
         import httpx
 
-        token_url = f"https://{AZURE_SPEECH_REGION}.api.cognitive.microsoft.us/sts/v1.0/issueToken"
+        token_url = f"https://{config.AZURE_SPEECH_REGION}.api.cognitive.microsoft.us/sts/v1.0/issueToken"
         headers = {
-            "Ocp-Apim-Subscription-Key": AZURE_SPEECH_KEY
+            "Ocp-Apim-Subscription-Key": config.AZURE_SPEECH_KEY
         }
 
         logger.info(f"Fetching speech token from: {token_url}")
@@ -131,12 +127,15 @@ def get_speech_token() -> dict:
 
             return {
                 "token": token,
-                "region": AZURE_SPEECH_REGION
+                "region": config.AZURE_SPEECH_REGION
             }
 
     except httpx.HTTPError as e:
-        logger.error(f"HTTP error fetching speech token: {str(e)}")
-        raise ValueError(f"Failed to fetch speech token: {str(e)}")
-    except Exception as e:
-        logger.error(f"Error fetching speech token: {str(e)}")
+        error_msg = f"Failed to fetch speech token: {str(e)}"
+        log_error(e, "HTTP error fetching speech token")
+        raise SpeechServiceError(error_msg)
+    except SpeechServiceError:
         raise
+    except Exception as e:
+        log_error(e, "Error fetching speech token")
+        raise SpeechServiceError(f"Failed to fetch speech token: {str(e)}")

@@ -32,6 +32,8 @@ export function useSpeechService() {
       const { token, region } = await fetchToken();
 
       speechConfigRef.current = SpeechSDK.SpeechConfig.fromAuthorizationToken(token, region);
+      // Language will be set when starting recognition
+      // Default to en-US but can be overridden per recognition session
       speechConfigRef.current.speechRecognitionLanguage = 'en-US';
 
       setIsInitialized(true);
@@ -56,7 +58,7 @@ export function useSpeechService() {
     };
   }, [initializeSpeech]);
 
-  const startRecognition = useCallback(async (onResult, onError) => {
+  const startRecognition = useCallback(async (onResult, onError, language = 'en-US') => {
     if (!isInitialized || !speechConfigRef.current) {
       const err = new Error('Speech service not initialized');
       setError(err.message);
@@ -65,6 +67,10 @@ export function useSpeechService() {
     }
 
     try {
+      // Set the language for this recognition session
+      speechConfigRef.current.speechRecognitionLanguage = language;
+      console.log('Starting recognition with language:', language);
+
       // Get the actual microphone device - this is crucial for browser environments
       console.log('Enumerating audio devices...');
       const devices = await navigator.mediaDevices.enumerateDevices();
