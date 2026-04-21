@@ -119,7 +119,8 @@ function App() {
       id: assistantMessageId,
       role: 'assistant',
       content: '',
-      ui: null
+      ui: null,
+      toolCalls: null
     };
 
     setMessages(prev => [...prev, assistantMessage]);
@@ -160,12 +161,15 @@ function App() {
 
             if (data.type === 'tool_calls') {
               toolCalls = data.tools;
+              console.log('Received tool calls:', toolCalls);
               // Display tool call information immediately
-              setMessages(prev => prev.map(msg =>
-                msg.id === assistantMessageId
-                  ? { ...msg, toolCalls: toolCalls }
-                  : msg
-              ));
+              setMessages(prev => prev.map(msg => {
+                if (msg.id === assistantMessageId) {
+                  console.log('Updating message with toolCalls:', toolCalls);
+                  return { ...msg, toolCalls: toolCalls };
+                }
+                return msg;
+              }));
             } else if (data.type === 'ui_resources') {
               uiResources = data.resources;
             } else if (data.type === 'content') {
