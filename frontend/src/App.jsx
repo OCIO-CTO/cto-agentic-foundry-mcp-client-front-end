@@ -4,15 +4,14 @@ import logoDark from './assets/logo_dark.png';
 import { VoiceInput } from './components/VoiceInput';
 import { Message } from './components/Message';
 import { useTypewriter } from './hooks/useTypewriter';
-import { sendChatMessage, cleanupBlobURLs, renderUIResources } from './api/client';
+import { sendChatMessage } from './api/client';
 import { processSSEStream, createChatEventHandlers } from './utils/sse';
 import {
   API_CONFIG,
   PLACEHOLDER_QUESTIONS,
   ANIMATION_TIMING,
   MESSAGE_ROLES,
-  SSE_EVENT_TYPES,
-  SPEECH_LANGUAGES,
+  SPEECH_LANGUAGE,
   BACKGROUND_IMAGES,
 } from './config/constants';
 
@@ -45,12 +44,6 @@ function App() {
     }
   }, [messages.length, isSettled]);
 
-  // Cleanup blob URLs on unmount
-  useEffect(() => {
-    return () => {
-      cleanupBlobURLs(messages);
-    };
-  }, [messages]);
 
   // Auto-scroll to bottom
   const scrollToBottom = () => {
@@ -97,31 +90,6 @@ function App() {
 
       // Create event handlers for SSE stream
       const eventHandlers = createChatEventHandlers(setMessages, assistantMessageId);
-
-      // Add custom handler for UI resources
-      const originalDoneHandler = eventHandlers[SSE_EVENT_TYPES.DONE];
-      let pendingUIResources = null;
-
-      eventHandlers[SSE_EVENT_TYPES.UI_RESOURCES] = (data) => {
-        pendingUIResources = data.resources;
-      };
-
-      eventHandlers[SSE_EVENT_TYPES.DONE] = async (data) => {
-        // Render UI resources if available
-        if (pendingUIResources && pendingUIResources.length > 0) {
-          const uiComponents = await renderUIResources(pendingUIResources);
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === assistantMessageId ? { ...msg, ui: uiComponents } : msg
-            )
-          );
-        }
-
-        // Call original handler
-        if (originalDoneHandler) {
-          await originalDoneHandler(data);
-        }
-      };
 
       // Process SSE stream
       await processSSEStream(response.body, eventHandlers);
@@ -184,7 +152,7 @@ function App() {
           <VoiceInput
             onTranscript={handleVoiceTranscript}
             disabled={isLoading}
-            language={SPEECH_LANGUAGES.SPANISH}
+            language={SPEECH_LANGUAGE}
           />
           <input
             type="text"

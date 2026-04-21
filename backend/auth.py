@@ -27,18 +27,3 @@ async def verify_api_key(x_api_key: Optional[str] = Header(None)) -> str:
         raise HTTPException(status_code=401, detail="Invalid API key")
 
     return x_api_key or "development"
-
-
-def validate_api_key_sync(api_key: Optional[str]) -> bool:
-    """
-    Synchronous API key validation.
-
-    Args:
-        api_key: API key to validate
-
-    Returns:
-        True if valid or not required, False otherwise
-    """
-    if not config.API_KEY:
-        return True
-    return api_key == config.API_KEY

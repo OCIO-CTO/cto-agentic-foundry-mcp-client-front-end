@@ -94,19 +94,28 @@ export function createChatEventHandlers(updateMessages, assistantMessageId) {
       if (toolCallsMap[tool_id]) {
         toolCallsMap[tool_id].result = result;
 
+        // Check if result contains UI components (MCP Apps)
+        if (result && result.ui) {
+          console.log('UI components found in tool result:', result.ui);
+          uiResources = result.ui;
+        }
+
         updateMessages((prev) =>
           prev.map((msg) => {
             if (msg.id === assistantMessageId) {
-              return { ...msg, toolCalls: Object.values(toolCallsMap) };
+              const updatedMsg = { ...msg, toolCalls: Object.values(toolCallsMap) };
+
+              // Attach UI components to message if present
+              if (uiResources) {
+                updatedMsg.ui = uiResources;
+              }
+
+              return updatedMsg;
             }
             return msg;
           })
         );
       }
-    },
-
-    ui_resources: (data) => {
-      uiResources = data.resources;
     },
 
     content: (data) => {
@@ -124,13 +133,8 @@ export function createChatEventHandlers(updateMessages, assistantMessageId) {
       );
     },
 
-    done: async (data) => {
-      // If UI resources are available, process them
-      if (uiResources && uiResources.length > 0) {
-        // This would need to be handled externally as it requires
-        // fetchMCPResource and renderUIResources functions
-        console.log('UI resources received:', uiResources);
-      }
+    done: async () => {
+      // Stream complete
     },
 
     error: (data) => {

@@ -215,15 +215,6 @@ export function useSpeechService() {
     }
   }, []);
 
-  const stopSpeech = useCallback(() => {
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
-      audioRef.current = null;
-      setIsSpeaking(false);
-    }
-  }, []);
-
   const synthesizeSpeech = useCallback(async (text, onStart, onComplete, onError) => {
     if (!isInitialized || !speechConfigRef.current) {
       const err = new Error('Speech service not initialized');
@@ -301,7 +292,6 @@ export function useSpeechService() {
     startRecognition,
     stopRecognition,
     synthesizeSpeech,
-    stopSpeech,
     reinitialize: initializeSpeech,
   };
 }

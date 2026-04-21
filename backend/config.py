@@ -27,8 +27,10 @@ class Config:
     # MCP Configuration
     REMOTE_MCP_URL: str = os.getenv(
         "REMOTE_MCP_URL",
-        "https://fsis-mcp-server-test1.azurewebsites.us/mcp"
+        "http://localhost:3000/mcp"
     )
+    MCP_NAMESPACE: str = os.getenv("MCP_NAMESPACE", "")
+    MCP_SERVICE_NAME: str = os.getenv("MCP_SERVICE_NAME", "MCP Proxy")
 
     # Server Configuration
     PORT: int = int(os.getenv("PORT", "8000"))
