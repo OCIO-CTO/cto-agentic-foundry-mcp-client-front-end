@@ -335,11 +335,10 @@ Edit [frontend/src/App.css](frontend/src/App.css).
 
 ## Important Notes
 
-- **No Skills Directory:** This project doesn't use MCP skills (mentioned in SKILLS_GUIDE.md but not implemented here)
-- **No Direct Task Storage:** Unlike the example in README.md, this proxy doesn't manage tasks directly
 - **Remote Tool Namespace:** All remote tools are prefixed with `fsis_`
 - **Python Version:** Uses Python 3.13.3 (verify compatibility with FastMCP)
 - **FastMCP Beta:** Uses FastMCP 3.0.0b1 (beta version)
+- **Clean Codebase:** Legacy refactoring files have been removed to maintain code clarity
 
 ## Testing
 
