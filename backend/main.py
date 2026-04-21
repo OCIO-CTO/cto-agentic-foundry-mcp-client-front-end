@@ -1,6 +1,7 @@
 from fastmcp import FastMCP
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import uvicorn
 import os
@@ -767,6 +768,17 @@ def get_task_analytics_ui():
     return HTMLResponse(content=task_analytics_ui())
 
 
+@app.get("/static/cows.svg")
+def get_background_image():
+    """Serve the background image"""
+    from fastapi.responses import FileResponse
+    import os
+    svg_path = Path(__file__).parent / "cows.svg"
+    if svg_path.exists():
+        return FileResponse(svg_path, media_type="image/svg+xml")
+    raise HTTPException(status_code=404, detail="Background image not found")
+
+
 class ChatMessage(BaseModel):
     role: str
     content: str
@@ -921,6 +933,7 @@ async def chat(request: ChatRequest):
     Chat endpoint that uses Azure OpenAI with MCP tools.
     The LLM can call the MCP tools to perform task management operations.
     Skills are loaded from the MCP server and injected into the system prompt.
+    Returns a streaming response (SSE) for the final answer.
     """
     try:
         # Convert Pydantic models to dict for OpenAI
@@ -954,7 +967,7 @@ IMPORTANT: Follow the instructions in the skills above. Use them to guide your r
         # Get available tools in OpenAI format
         tools = mcp_tools_to_openai_tools()
 
-        # Call Azure OpenAI with function calling
+        # Call Azure OpenAI with function calling (non-streaming)
         response = azure_client.chat.completions.create(
             model=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
             messages=messages,
@@ -964,6 +977,9 @@ IMPORTANT: Follow the instructions in the skills above. Use them to guide your r
 
         response_message = response.choices[0].message
         tool_calls = response_message.tool_calls
+
+        # Collect UI resources from tool calls
+        ui_resources = []
 
         # If the model wants to call tools
         if tool_calls:
@@ -988,6 +1004,11 @@ IMPORTANT: Follow the instructions in the skills above. Use them to guide your r
                 function_name = tool_call.function.name
                 function_args = json.loads(tool_call.function.arguments)
 
+                # Collect UI resources
+                ui_resource = get_tool_ui_resource(function_name)
+                if ui_resource and ui_resource not in ui_resources:
+                    ui_resources.append(ui_resource)
+
                 # Execute the tool
                 try:
                     function_response = execute_tool(function_name, function_args)
@@ -1007,37 +1028,50 @@ IMPORTANT: Follow the instructions in the skills above. Use them to guide your r
                         "content": json.dumps({"error": str(e)})
                     })
 
-            # Get final response from the model
-            second_response = azure_client.chat.completions.create(
-                model=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
-                messages=messages
-            )
+            # Stream the final response
+            async def generate_stream():
+                # Send UI resources first if any
+                if ui_resources:
+                    yield f"data: {json.dumps({'type': 'ui_resources', 'resources': ui_resources})}\n\n"
 
-            # Collect UI resources from tool calls
-            ui_resources = []
-            for tc in tool_calls:
-                ui_resource = get_tool_ui_resource(tc.function.name)
-                if ui_resource and ui_resource not in ui_resources:
-                    ui_resources.append(ui_resource)
+                # Get streaming response from the model
+                stream = azure_client.chat.completions.create(
+                    model=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
+                    messages=messages,
+                    stream=True
+                )
 
-            response_data = {
-                "role": "assistant",
-                "content": second_response.choices[0].message.content
-            }
+                for chunk in stream:
+                    # Azure sends empty choices in first chunk, skip it
+                    if chunk.choices and len(chunk.choices) > 0:
+                        delta = chunk.choices[0].delta
+                        if delta.content:
+                            yield f"data: {json.dumps({'type': 'content', 'content': delta.content})}\n\n"
 
-            # Return _meta with UI resource URIs (MCP Apps spec)
-            if ui_resources:
-                response_data["_meta"] = {
-                    "ui_resources": ui_resources
-                }
+                # Signal end of stream
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
-            return response_data
+            return StreamingResponse(generate_stream(), media_type="text/event-stream")
         else:
-            # No tool calls, return the response directly
-            return {
-                "role": "assistant",
-                "content": response_message.content
-            }
+            # No tool calls, stream the response directly
+            async def generate_stream():
+                stream = azure_client.chat.completions.create(
+                    model=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
+                    messages=messages,
+                    stream=True
+                )
+
+                for chunk in stream:
+                    # Azure sends empty choices in first chunk, skip it
+                    if chunk.choices and len(chunk.choices) > 0:
+                        delta = chunk.choices[0].delta
+                        if delta.content:
+                            yield f"data: {json.dumps({'type': 'content', 'content': delta.content})}\n\n"
+
+                # Signal end of stream
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+            return StreamingResponse(generate_stream(), media_type="text/event-stream")
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

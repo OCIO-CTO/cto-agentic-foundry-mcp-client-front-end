@@ -5,12 +5,37 @@ import './App.css';
 
 const CHAT_URL = import.meta.env.VITE_CHAT_URL || 'http://localhost:8001/chat';
 const MCP_BASE_URL = import.meta.env.VITE_MCP_URL || 'http://localhost:8001';
+const BACKGROUND_IMAGE = import.meta.env.VITE_BACKGROUND_IMAGE || '';
 
 function App() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef(null);
+
+  // Random greeting messages
+  const greetings = [
+    "Hello! How can I help you today?",
+    "Hi there! What can I assist you with?",
+    "Good to see you! What would you like to do?",
+    "Welcome! How may I assist you today?",
+    "Hey! What can I help you with?",
+    "Greetings! What brings you here today?",
+    "Hi! Ready to tackle your tasks?",
+    "Hello! What's on your mind?"
+  ];
+
+  const [greeting] = useState(() =>
+    greetings[Math.floor(Math.random() * greetings.length)]
+  );
+
+  // Set custom background image if provided
+  useEffect(() => {
+    if (BACKGROUND_IMAGE) {
+      document.body.style.backgroundImage = `url('${BACKGROUND_IMAGE}')`;
+      document.body.classList.add('custom-bg');
+    }
+  }, []);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -88,6 +113,17 @@ function App() {
     setInput('');
     setIsLoading(true);
 
+    // Create assistant message placeholder
+    const assistantMessageId = Date.now() + 1;
+    const assistantMessage = {
+      id: assistantMessageId,
+      role: 'assistant',
+      content: '',
+      ui: null
+    };
+
+    setMessages(prev => [...prev, assistantMessage]);
+
     try {
       const response = await fetch(CHAT_URL, {
         method: 'POST',
@@ -104,30 +140,52 @@ function App() {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      const data = await response.json();
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let uiResources = null;
 
-      // Check if there are UI resources in _meta (MCP Apps spec)
-      let uiComponents = null;
-      if (data._meta && data._meta.ui_resources) {
-        // Fetch and render UI resources
-        uiComponents = await renderUIResources(data._meta.ui_resources);
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop(); // Keep incomplete line in buffer
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = JSON.parse(line.slice(6));
+
+            if (data.type === 'ui_resources') {
+              uiResources = data.resources;
+            } else if (data.type === 'content') {
+              // Append content chunk to assistant message
+              setMessages(prev => prev.map(msg =>
+                msg.id === assistantMessageId
+                  ? { ...msg, content: msg.content + data.content }
+                  : msg
+              ));
+            } else if (data.type === 'done') {
+              // Stream complete, fetch and render UI if needed
+              if (uiResources) {
+                const uiComponents = await renderUIResources(uiResources);
+                setMessages(prev => prev.map(msg =>
+                  msg.id === assistantMessageId
+                    ? { ...msg, ui: uiComponents }
+                    : msg
+                ));
+              }
+            }
+          }
+        }
       }
-
-      const assistantMessage = {
-        id: Date.now() + 1,
-        role: 'assistant',
-        content: data.content,
-        ui: uiComponents
-      };
-
-      setMessages(prev => [...prev, assistantMessage]);
     } catch (error) {
-      const errorMessage = {
-        id: Date.now() + 1,
-        role: 'assistant',
-        content: `Error: ${error.message}`,
-      };
-      setMessages(prev => [...prev, errorMessage]);
+      setMessages(prev => prev.map(msg =>
+        msg.id === assistantMessageId
+          ? { ...msg, content: `Error: ${error.message}` }
+          : msg
+      ));
     } finally {
       setIsLoading(false);
     }
@@ -135,23 +193,11 @@ function App() {
 
   return (
     <div className="app">
-      <header className="header">
-        <h1>MCP Task Manager</h1>
-        <p className="subtitle">Powered by FastMCP 3.0 + Azure OpenAI GPT-4o</p>
-      </header>
-
-      <div className="chat-container">
+      <div className={`chat-container ${messages.length > 0 ? 'expanded' : ''}`}>
         <div className="messages-viewport">
           {messages.length === 0 && (
             <div className="welcome-message">
-              <h2>Welcome to MCP Task Manager</h2>
-              <p>Ask me to manage your tasks with natural language:</p>
-              <ul>
-                <li>"Add a task to buy groceries"</li>
-                <li>"Show me all my tasks"</li>
-                <li>"Give me a complete overview with charts"</li>
-                <li>"Mark task 1 as complete"</li>
-              </ul>
+              <h2>{greeting}</h2>
             </div>
           )}
 
