@@ -22,7 +22,7 @@ import logging
 
 # Import refactored modules
 from config import config
-from auth import verify_api_key, validate_api_key_sync
+from auth import verify_api_key
 from exceptions import (
     MCPProxyException,
     ValidationError,
