@@ -8,7 +8,6 @@ const CHAT_URL = import.meta.env.VITE_CHAT_URL || 'http://localhost:8001/chat';
 const MCP_BASE_URL = import.meta.env.VITE_MCP_URL || 'http://localhost:8001';
 const BACKGROUND_IMAGE = import.meta.env.VITE_BACKGROUND_IMAGE || '';
 
-// Tool Call Drawer Component
 function ToolCallDrawer({ tool }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const isExecuting = !tool.result;
@@ -80,7 +79,6 @@ function App() {
     "What training do FSIS inspectors receive?"
   ];
 
-  // Set custom background image if provided
   useEffect(() => {
     if (BACKGROUND_IMAGE) {
       const randomParam = `?v=${Math.random()}`;
@@ -89,7 +87,6 @@ function App() {
     }
   }, []);
 
-  // Add 'settled' class after expansion animation completes (800ms)
   useEffect(() => {
     if (messages.length > 0 && !isSettled) {
       const timer = setTimeout(() => {
@@ -99,7 +96,6 @@ function App() {
     }
   }, [messages.length, isSettled]);
 
-  // Cleanup blob URLs when component unmounts to prevent memory leaks
   useEffect(() => {
     return () => {
       messages.forEach(msg => {
