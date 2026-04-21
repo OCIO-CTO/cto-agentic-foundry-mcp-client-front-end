@@ -12,6 +12,12 @@ import json
 # Load environment variables
 load_dotenv()
 
+# Import MCP client for remote server
+from mcp_client import MCPClient
+
+# Remote MCP server URL
+REMOTE_MCP_URL = os.getenv("REMOTE_MCP_URL", "https://fsis-mcp-server-test1.azurewebsites.us/mcp")
+
 # Create FastMCP instance
 mcp = FastMCP("Task Manager MCP Server")
 
@@ -792,7 +798,23 @@ def mcp_tools_to_openai_tools():
     """Convert MCP tools to OpenAI function calling format"""
     tools = []
 
-    # Manually define tools in OpenAI format based on our MCP tools
+    # Add remote MCP server tools
+    try:
+        with MCPClient(REMOTE_MCP_URL) as client:
+            remote_tools = client.list_tools()
+            for tool in remote_tools:
+                tools.append({
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description or f"Execute {tool.name}",
+                        "parameters": tool.inputSchema
+                    }
+                })
+    except Exception as e:
+        print(f"Warning: Could not fetch remote MCP tools: {e}")
+
+    # Manually define local tools in OpenAI format based on our MCP tools
     tools.append({
         "type": "function",
         "function": {
@@ -886,7 +908,8 @@ def mcp_tools_to_openai_tools():
 
 
 def execute_tool(tool_name: str, arguments: dict):
-    """Execute an MCP tool by name"""
+    """Execute an MCP tool by name - either local or remote"""
+    # Local tools
     if tool_name == "add_task":
         return add_task(**arguments)
     elif tool_name == "list_tasks":
@@ -897,8 +920,26 @@ def execute_tool(tool_name: str, arguments: dict):
         return delete_task(**arguments)
     elif tool_name == "get_statistics":
         return get_statistics(**arguments)
-    else:
-        raise ValueError(f"Unknown tool: {tool_name}")
+
+    # Try remote MCP server
+    try:
+        with MCPClient(REMOTE_MCP_URL) as client:
+            result = client.call_tool(tool_name, arguments)
+            # Extract content from MCP response
+            if hasattr(result, 'content'):
+                # Handle list of content items
+                if isinstance(result.content, list):
+                    content_parts = []
+                    for item in result.content:
+                        if hasattr(item, 'text'):
+                            content_parts.append(item.text)
+                        elif isinstance(item, dict) and 'text' in item:
+                            content_parts.append(item['text'])
+                    return {"result": "\n".join(content_parts) if content_parts else str(result.content)}
+                return {"result": str(result.content)}
+            return result if isinstance(result, dict) else {"result": str(result)}
+    except Exception as e:
+        raise ValueError(f"Error executing tool '{tool_name}': {str(e)}")
 
 
 def get_tool_ui_resource(tool_name: str) -> str | None:
