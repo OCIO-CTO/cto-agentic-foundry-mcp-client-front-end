@@ -19,25 +19,54 @@ export function VoiceInput({ onTranscript, disabled = false }) {
 
   const handleMicClick = async () => {
     if (isListening) {
+      console.log('Stopping recognition, transcript:', transcript);
       stopRecognition();
       setIsListening(false);
 
       if (transcript && onTranscript) {
+        console.log('Calling onTranscript with:', transcript);
         onTranscript(transcript);
+        setTranscript('');
+      } else {
+        console.log('No transcript to submit');
       }
-      setTranscript('');
     } else {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach(track => track.stop());
+        console.log('Checking microphone access...');
+
+        // Check if getUserMedia is available
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error('Microphone not supported in this browser. Try Chrome or Edge.');
+        }
+
+        // Request microphone permission first
+        console.log('Requesting microphone permission...');
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
+        });
+
+        console.log('Microphone permission granted, active tracks:', stream.getAudioTracks().length);
+
+        // Stop the permission check stream - Azure SDK will create its own
+        stream.getTracks().forEach(track => {
+          console.log('Stopping permission check track:', track.label);
+          track.stop();
+        });
 
         setLocalError(null);
         setTranscript('');
 
+        console.log('Starting speech recognition with Azure SDK...');
         recognizerRef.current = startRecognition(
           (text) => {
+            console.log('Recognition result received:', text);
             setTranscript(prev => {
               const newTranscript = prev ? `${prev} ${text}` : text;
+              console.log('Updated transcript:', newTranscript);
               return newTranscript;
             });
           },
@@ -49,11 +78,23 @@ export function VoiceInput({ onTranscript, disabled = false }) {
         );
 
         if (recognizerRef.current) {
+          console.log('Recognition started successfully');
           setIsListening(true);
+        } else {
+          console.error('Failed to start recognizer');
+          setLocalError('Failed to start speech recognition');
         }
       } catch (err) {
-        console.error('Microphone permission error:', err);
-        setLocalError('Microphone permission denied. Please allow microphone access.');
+        console.error('Microphone error:', err);
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+          setLocalError('Microphone permission denied. Please allow microphone access in your browser settings.');
+        } else if (err.name === 'NotFoundError') {
+          setLocalError('No microphone found. Please connect a microphone.');
+        } else if (err.name === 'NotSupportedError') {
+          setLocalError('HTTPS required. Microphone only works on secure connections.');
+        } else {
+          setLocalError(err.message || 'Failed to access microphone');
+        }
       }
     }
   };

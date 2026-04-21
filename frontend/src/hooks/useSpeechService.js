@@ -68,15 +68,30 @@ export function useSpeechService() {
       const audioConfig = SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
       const recognizer = new SpeechSDK.SpeechRecognizer(speechConfigRef.current, audioConfig);
 
+      recognizer.recognizing = (s, e) => {
+        console.log('Recognizing (interim):', e.result.text);
+      };
+
       recognizer.recognized = (s, e) => {
+        console.log('Recognition event fired, reason:', e.result.reason);
         if (e.result.reason === SpeechSDK.ResultReason.RecognizedSpeech) {
-          console.log('Recognized:', e.result.text);
-          if (onResult) onResult(e.result.text);
+          console.log('Recognized speech:', e.result.text);
+          if (onResult) {
+            console.log('Calling onResult callback with:', e.result.text);
+            onResult(e.result.text);
+          } else {
+            console.warn('No onResult callback provided');
+          }
+        } else if (e.result.reason === SpeechSDK.ResultReason.NoMatch) {
+          console.log('No speech could be recognized');
         }
       };
 
       recognizer.canceled = (s, e) => {
-        console.error('Recognition canceled:', e.reason);
+        console.error('Recognition canceled, reason:', e.reason);
+        if (e.reason === SpeechSDK.CancellationReason.Error) {
+          console.error('Recognition error details:', e.errorDetails);
+        }
         setIsRecognizing(false);
         if (e.reason === SpeechSDK.CancellationReason.Error) {
           const err = new Error(`Recognition error: ${e.errorDetails}`);
