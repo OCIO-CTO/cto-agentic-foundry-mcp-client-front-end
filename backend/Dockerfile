@@ -2,12 +2,15 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Copy requirements first for better caching
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy application code (single file!)
 COPY main.py .
-COPY mcp_client.py .
-COPY cows.svg .
+
+# Copy static assets
+COPY assets/ ./assets/
 
 EXPOSE 8000
 

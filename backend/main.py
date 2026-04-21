@@ -1,128 +1,186 @@
-from fastmcp import FastMCP
-from fastapi import FastAPI, HTTPException
+"""
+Consolidated MCP Proxy Server
+Single-file implementation for simplicity
+"""
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, HTTPException, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, FileResponse
-from pydantic import BaseModel
-import uvicorn
-import os
+from fastapi.responses import StreamingResponse, Response
+from fastmcp import Client
 from openai import AzureOpenAI
+import httpx
+import uvicorn
 from dotenv import load_dotenv
+import os
 import json
+import logging
 from pathlib import Path
+import random
+from typing import Optional, List, Dict, Any
+import asyncio
+from datetime import datetime
 
 # Load environment variables
 load_dotenv()
 
-# Import MCP client for remote server
-from mcp_client import MCPClient
-
-# Remote MCP server URL
+# Configuration
+AZURE_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
+AZURE_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview")
+AZURE_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
+AZURE_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
 REMOTE_MCP_URL = os.getenv("REMOTE_MCP_URL", "https://fsis-mcp-server-test1.azurewebsites.us/mcp")
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3001").split(",")
+PORT = int(os.getenv("PORT", "8000"))
+API_KEY = os.getenv("API_KEY", "")
+OPENAI_TIMEOUT = int(os.getenv("OPENAI_TIMEOUT", "30"))
 
-# Create FastMCP instance
-mcp = FastMCP("MCP Proxy Server")
+# Simple logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Skills support not available in FastMCP 3.0b1
+# Global MCP client and cache
+mcp_client: Optional[Client] = None
+tools_cache: List[Dict[str, Any]] = []
 
-# Initialize Azure OpenAI client
+
+# Helper to convert sync iterators to async
+async def async_iter_wrapper(sync_iter):
+    """Wrap synchronous iterator to async"""
+    for item in sync_iter:
+        yield item
+
+
+# MCP Functions
+async def get_mcp_client() -> Client:
+    """Get or create MCP client"""
+    global mcp_client
+    if mcp_client is None:
+        mcp_client = Client(REMOTE_MCP_URL)
+        await mcp_client.__aenter__()
+        logger.info(f"Connected to MCP server at {REMOTE_MCP_URL}")
+    return mcp_client
+
+
+async def list_mcp_tools() -> List[Dict[str, Any]]:
+    """Fetch tools from remote MCP server"""
+    global tools_cache
+    if tools_cache:
+        return tools_cache
+
+    client = await get_mcp_client()
+    tools = await client.list_tools()
+    logger.info(f"Fetched {len(tools)} tools from MCP server")
+
+    tools_cache = [
+        {
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description or f"Execute {tool.name}",
+                "parameters": tool.inputSchema
+            }
+        }
+        for tool in tools
+    ]
+    return tools_cache
+
+
+async def execute_mcp_tool(tool_name: str, arguments: dict) -> Dict[str, Any]:
+    """Execute a remote MCP tool"""
+    client = await get_mcp_client()
+    logger.info(f"Executing tool '{tool_name}' with arguments: {arguments}")
+
+    result = await client.call_tool(tool_name, arguments)
+
+    # Extract content from MCP response
+    if hasattr(result, 'content') and isinstance(result.content, list):
+        content_parts = []
+        for item in result.content:
+            if hasattr(item, 'type') and item.type == 'text' and hasattr(item, 'text'):
+                content_parts.append(item.text)
+            elif isinstance(item, dict) and 'text' in item:
+                content_parts.append(item['text'])
+            else:
+                content_parts.append(str(item))
+        return {"result": "\n".join(content_parts) if content_parts else str(result.content)}
+
+    return {"result": str(result.content)} if hasattr(result, 'content') else {"result": str(result)}
+
+
+async def close_mcp_client():
+    """Cleanup MCP client"""
+    global mcp_client
+    if mcp_client:
+        try:
+            await mcp_client.__aexit__(None, None, None)
+            logger.info("MCP client connection closed")
+        except Exception as e:
+            logger.error(f"Error closing MCP client: {e}")
+        finally:
+            mcp_client = None
+
+
+# OpenAI Setup
+http_client = httpx.Client(timeout=httpx.Timeout(timeout=OPENAI_TIMEOUT, connect=5.0))
 azure_client = AzureOpenAI(
-    api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-    api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
-    azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
+    api_key=AZURE_API_KEY,
+    api_version=AZURE_API_VERSION,
+    azure_endpoint=AZURE_ENDPOINT,
+    http_client=http_client
 )
 
-# All tools are provided by remote MCP server
-# No local tools defined
 
-
-async def get_remote_tools():
-    """Fetch tools from remote MCP server asynchronously"""
-    from fastmcp import Client
-    tools = []
-
+# FastAPI App Setup
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage application lifespan"""
+    # Startup
+    logger.info("Starting MCP Proxy Server")
     try:
-        client = Client(REMOTE_MCP_URL)
-        async with client:
-            remote_tools = await client.list_tools()
-            for tool in remote_tools:
-                tools.append({
-                    "type": "function",
-                    "function": {
-                        "name": tool.name,
-                        "description": tool.description or f"Execute {tool.name}",
-                        "parameters": tool.inputSchema
-                    }
-                })
+        tools = await list_mcp_tools()
+        logger.info(f"Successfully cached {len(tools)} tools from MCP server")
     except Exception as e:
-        print(f"Warning: Could not fetch remote MCP tools: {e}")
+        logger.warning(f"MCP server unavailable on startup: {e}")
 
-    return tools
+    yield
 
-
-def mcp_tools_to_openai_tools():
-    """Convert MCP tools to OpenAI function calling format"""
-    # Note: This function is deprecated - tools are now fetched async in the endpoint
-    # Returning empty list as remote tools are fetched via get_remote_tools() in async context
-    return []
+    # Shutdown
+    logger.info("Shutting down MCP Proxy Server")
+    await close_mcp_client()
 
 
-async def execute_tool(tool_name: str, arguments: dict):
-    """Execute a remote MCP tool"""
-    # All tools come from remote MCP server
-    from fastmcp import Client
-    try:
-        client = Client(REMOTE_MCP_URL)
-        async with client:
-            result = await client.call_tool(tool_name, arguments)
-            # Extract content from MCP response
-            if hasattr(result, 'content'):
-                # Handle list of content items
-                if isinstance(result.content, list):
-                    content_parts = []
-                    for item in result.content:
-                        # Check for TextContent type
-                        if hasattr(item, 'type') and item.type == 'text' and hasattr(item, 'text'):
-                            content_parts.append(item.text)
-                        elif isinstance(item, dict) and 'text' in item:
-                            content_parts.append(item['text'])
-                        else:
-                            # For other content types, convert to string
-                            content_parts.append(str(item))
-                    return {"result": "\n".join(content_parts) if content_parts else str(result.content)}
-                return {"result": str(result.content)}
-            return result if isinstance(result, dict) else {"result": str(result)}
-    except Exception as e:
-        raise ValueError(f"Error executing tool '{tool_name}': {str(e)}")
+app = FastAPI(
+    title="MCP Proxy Server API",
+    description="Proxy server for Model Context Protocol with Azure OpenAI integration",
+    version="1.0.0",
+    lifespan=lifespan
+)
 
-
-def get_tool_ui_resource(tool_name: str) -> str | None:
-    """Get the UI resource URI for a given tool"""
-    # Remote tools don't have UI resources defined here
-    return None
-
-
-# Create the FastAPI app
-app = FastAPI(title="MCP Proxy Server API", lifespan=mcp.lifespan)
-
-# Add CORS middleware
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[origin.strip() for origin in CORS_ORIGINS],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "X-API-Key"],
 )
 
-# Mount MCP endpoints
-app.mount("/mcp", mcp.get_asgi_app())
+
+# Optional API key authentication
+async def verify_api_key(x_api_key: Optional[str] = Header(None)) -> str:
+    """Verify API key from header"""
+    if API_KEY and x_api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    return x_api_key or "development"
 
 
+# Routes
 @app.get("/")
 async def root():
-    """Root endpoint with API information"""
+    """Health check endpoint"""
     return {
-        "message": "MCP Proxy Server",
-        "version": "1.0.0",
+        "service": "MCP Proxy Server",
+        "status": "running",
         "mcp_endpoint": "/mcp",
         "chat_endpoint": "/chat",
         "remote_mcp_url": REMOTE_MCP_URL
@@ -130,175 +188,161 @@ async def root():
 
 
 @app.get("/static/cows.svg")
-async def get_background_image():
-    """Serve the background SVG image"""
-    svg_path = Path(__file__).parent / "cows.svg"
-    if svg_path.exists():
-        return FileResponse(svg_path, media_type="image/svg+xml")
-    raise HTTPException(status_code=404, detail="Background image not found")
+async def get_background_image(request: Request):
+    """Serve a random background SVG image"""
+    backgrounds = ["cows.svg", "field1.svg", "tractor1.svg", "plant1.svg"]
+    selected = random.choice(backgrounds)
+    svg_path = Path(__file__).parent / "assets" / selected
 
+    if not svg_path.exists():
+        raise HTTPException(status_code=404, detail="Background image not found")
 
-class ChatMessage(BaseModel):
-    role: str
-    content: str
+    with open(svg_path, 'r') as f:
+        svg_content = f.read()
 
-
-class ChatRequest(BaseModel):
-    messages: list[ChatMessage]
+    return Response(
+        content=svg_content,
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
+    )
 
 
 @app.post("/chat")
-async def chat(request: ChatRequest):
-    """
-    Chat endpoint that uses Azure OpenAI with remote MCP tools.
-    The LLM can call remote MCP tools to perform operations.
-    Returns a streaming response (SSE) for the final answer.
-    """
+async def chat(
+    request: Request,
+    chat_request: dict,
+    api_key: str = Header(None, alias="x-api-key")
+):
+    """Chat endpoint with streaming and MCP tool support"""
+    # Verify API key if configured
+    if API_KEY and api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    messages = chat_request.get("messages", [])
+    if not messages:
+        raise HTTPException(status_code=400, detail="Messages required")
+
+    logger.info(f"Chat request received with {len(messages)} messages")
+
+    # Fetch tools from MCP server
     try:
-        # Convert Pydantic models to dict for OpenAI
-        messages = [{"role": msg.role, "content": msg.content} for msg in request.messages]
-
-        # Build system message
-        system_message = {
-            "role": "system",
-            "content": """You are a helpful AI assistant with access to MCP tools.
-
-Use the available tools to help users with their requests.
-
-IMPORTANT: When you receive search results or other data from tools, present them clearly to the user with proper formatting and citations."""
-        }
-        messages.insert(0, system_message)
-
-        # Get available tools in OpenAI format (including remote tools)
-        remote_tools = await get_remote_tools()
-        tools = mcp_tools_to_openai_tools()
-        tools.extend(remote_tools)
-
-        # Call Azure OpenAI with function calling (non-streaming)
-        response = azure_client.chat.completions.create(
-            model=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
-            messages=messages,
-            tools=tools,
-            tool_choice="auto"
-        )
-
-        response_message = response.choices[0].message
-        tool_calls = response_message.tool_calls
-
-        # Collect UI resources from tool calls
-        ui_resources = []
-        tool_call_info = []
-
-        # If the model wants to call tools
-        if tool_calls:
-            # Store tool call information for streaming
-            for tc in tool_calls:
-                # Use getattr to avoid type checking issues
-                func = getattr(tc, 'function', None)
-                if func:
-                    tool_call_info.append({
-                        'name': func.name,
-                        'arguments': json.loads(func.arguments)
-                    })
-
-            # Add the assistant's response to messages
-            messages.append({
-                "role": "assistant",
-                "content": response_message.content,
-                "tool_calls": [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments
-                        }
-                    } for tc in tool_calls
-                ]
-            })
-
-            # Execute each tool call
-            for tool_call in tool_calls:
-                function_name = tool_call.function.name
-                function_args = json.loads(tool_call.function.arguments)
-
-                # Collect UI resources
-                ui_resource = get_tool_ui_resource(function_name)
-                if ui_resource and ui_resource not in ui_resources:
-                    ui_resources.append(ui_resource)
-
-                # Execute the tool
-                try:
-                    function_response = await execute_tool(function_name, function_args)
-
-                    # Add tool response to messages
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "name": function_name,
-                        "content": json.dumps(function_response)
-                    })
-                except Exception as e:
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "name": function_name,
-                        "content": json.dumps({"error": str(e)})
-                    })
-
-            # Stream the final response
-            async def generate_stream_with_tools():
-                # Send tool call information first
-                if tool_call_info:
-                    yield f"data: {json.dumps({'type': 'tool_calls', 'tools': tool_call_info})}\n\n"
-
-                # Send UI resources if any
-                if ui_resources:
-                    yield f"data: {json.dumps({'type': 'ui_resources', 'resources': ui_resources})}\n\n"
-
-                # Get streaming response from the model
-                stream = azure_client.chat.completions.create(
-                    model=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
-                    messages=messages,
-                    stream=True
-                )
-
-                for chunk in stream:
-                    # Azure sends empty choices in first chunk, skip it
-                    if chunk.choices and len(chunk.choices) > 0:
-                        delta = chunk.choices[0].delta
-                        if delta.content:
-                            yield f"data: {json.dumps({'type': 'content', 'content': delta.content})}\n\n"
-
-                # Signal end of stream
-                yield f"data: {json.dumps({'type': 'done'})}\n\n"
-
-            return StreamingResponse(generate_stream_with_tools(), media_type="text/event-stream")
-        else:
-            # No tool calls, stream the response directly
-            async def generate_stream():
-                stream = azure_client.chat.completions.create(
-                    model=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
-                    messages=messages,
-                    stream=True
-                )
-
-                for chunk in stream:
-                    # Azure sends empty choices in first chunk, skip it
-                    if chunk.choices and len(chunk.choices) > 0:
-                        delta = chunk.choices[0].delta
-                        if delta.content:
-                            yield f"data: {json.dumps({'type': 'content', 'content': delta.content})}\n\n"
-
-                # Signal end of stream
-                yield f"data: {json.dumps({'type': 'done'})}\n\n"
-
-            return StreamingResponse(generate_stream(), media_type="text/event-stream")
-
+        tools = await list_mcp_tools()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.warning(f"MCP server unavailable: {e}")
+        tools = []
+
+    # Build messages with system prompt
+    system_message = {
+        "role": "system",
+        "content": "You are a helpful assistant with access to search tools. Use them when appropriate."
+    }
+    full_messages = [system_message] + messages
+
+    async def generate_stream():
+        """Generate Server-Sent Events stream"""
+        try:
+            # First, make a non-streaming call to check for tool calls
+            initial_response = azure_client.chat.completions.create(
+                model=AZURE_DEPLOYMENT,
+                messages=full_messages,
+                tools=tools if tools else None,
+                tool_choice="auto" if tools else None,
+                stream=False
+            )
+
+            response_message = initial_response.choices[0].message
+            tool_calls = response_message.tool_calls
+
+            # If there are tool calls, execute them ONCE and store results
+            if tool_calls:
+                tool_results = {}
+
+                for tc in tool_calls:
+                    # Parse arguments once
+                    args = json.loads(tc.function.arguments)
+
+                    # Send tool call start event with parsed arguments
+                    yield f"data: {json.dumps({'type': 'tool_call_start', 'tool': {'id': tc.id, 'name': tc.function.name, 'arguments': args}})}\n\n"
+
+                    try:
+                        logger.info(f"Executing tool: {tc.function.name}")
+                        result = await execute_mcp_tool(tc.function.name, args)
+                        tool_results[tc.id] = result
+                        yield f"data: {json.dumps({'type': 'tool_result', 'tool_id': tc.id, 'result': result})}\n\n"
+                    except Exception as e:
+                        logger.error(f"Tool execution failed: {e}")
+                        error_result = {"error": str(e)}
+                        tool_results[tc.id] = error_result
+                        yield f"data: {json.dumps({'type': 'tool_result', 'tool_id': tc.id, 'result': error_result})}\n\n"
+
+                # Add assistant message with tool calls
+                full_messages.append({
+                    "role": "assistant",
+                    "content": response_message.content,
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments
+                            }
+                        } for tc in tool_calls
+                    ]
+                })
+
+                # Reuse stored tool results
+                for tc in tool_calls:
+                    full_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": json.dumps(tool_results[tc.id])
+                    })
+
+                # Stream final response
+                stream = azure_client.chat.completions.create(
+                    model=AZURE_DEPLOYMENT,
+                    messages=full_messages,
+                    stream=True
+                )
+            else:
+                # No tool calls, just stream the response
+                if response_message.content:
+                    yield f"data: {json.dumps({'type': 'content', 'content': response_message.content})}\n\n"
+                    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                    return
+
+                # Stream if no content in initial response
+                stream = azure_client.chat.completions.create(
+                    model=AZURE_DEPLOYMENT,
+                    messages=full_messages,
+                    stream=True
+                )
+
+            # Stream the content
+            async for chunk in async_iter_wrapper(stream):
+                if chunk.choices and len(chunk.choices) > 0:
+                    delta = chunk.choices[0].delta
+                    if delta.content:
+                        yield f"data: {json.dumps({'type': 'content', 'content': delta.content})}\n\n"
+
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+        except Exception as e:
+            logger.exception("Error in chat stream")
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive"
+        }
+    )
 
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "8000"))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    logger.info(f"Starting server on port {PORT}")
+    uvicorn.run(app, host="0.0.0.0", port=PORT)

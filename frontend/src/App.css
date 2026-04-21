@@ -25,8 +25,20 @@ body.custom-bg {
   align-items: center;
   justify-content: center;
   padding: 0;
-  padding-top: 3rem;
   position: relative;
+  gap: 0.25rem;
+}
+
+/* Keep centered while expanding - don't move yet */
+.app.has-messages {
+  justify-content: center;
+  animation: none;
+}
+
+/* Move to bottom only after expansion animation completes - instant, no transition */
+.app.has-messages.settled {
+  justify-content: flex-end;
+  padding-bottom: 3rem;
 }
 
 .app::before {
@@ -46,37 +58,55 @@ body.custom-bg {
   width: 90%;
   max-width: 600px;
   height: auto;
-  min-height: 400px;
-  max-height: 500px;
+  min-height: 60px;
   display: flex;
   flex-direction: column;
   position: relative;
   z-index: 1;
 
-  /* Liquid Glass Effect - Maximum transparency */
-  background: rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(8px) saturate(150%);
-  -webkit-backdrop-filter: blur(8px) saturate(150%);
+  /* Liquid Glass Effect - Ultra transparent with minimal blur */
+  background: rgba(255, 255, 255, 0.01);
+  backdrop-filter: blur(4px) saturate(100%);
+  -webkit-backdrop-filter: blur(4px) saturate(100%);
 
-  /* Borders and Shadows */
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  /* Borders and Shadows - More visible edges */
+  border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 24px;
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.2),
-              inset 0 1px 0 0 rgba(255, 255, 255, 0.1);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.12),
+              inset 0 1px 0 0 rgba(255, 255, 255, 0.08);
 
   overflow: hidden;
 
   /* Smooth expansion animation */
-  transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+  transform-origin: center center;
 }
 
-/* Expanded state when messages exist */
+/* Expanded state when messages exist - grows into full canvas from center */
 .chat-container.expanded {
   width: 85%;
   max-width: 1000px;
-  height: calc(100vh - 3rem);
-  max-height: calc(100vh - 3rem);
-  border-radius: 24px 24px 0 0;
+  height: calc(100vh - 6rem);
+  max-height: calc(100vh - 6rem);
+  border-radius: 24px;
+  animation: expandCanvas 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes expandCanvas {
+  from {
+    width: 90%;
+    max-width: 600px;
+    height: 60px;
+    opacity: 0.5;
+    transform: scale(0.95);
+  }
+  to {
+    width: 85%;
+    max-width: 1000px;
+    height: calc(100vh - 6rem);
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .messages-viewport {
@@ -86,16 +116,12 @@ body.custom-bg {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
-  justify-content: center;
+  justify-content: flex-start;
   opacity: 1;
 
   /* Custom Scrollbar */
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
-}
-
-.chat-container.expanded .messages-viewport {
-  justify-content: flex-start;
 }
 
 .messages-viewport::-webkit-scrollbar {
@@ -115,14 +141,27 @@ body.custom-bg {
   background: rgba(255, 255, 255, 0.3);
 }
 
+/* Initial state wrapper - centers greeting and input */
+.initial-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+}
+
 .welcome-message {
   text-align: center;
-  color: rgba(255, 255, 255, 0.95);
-  padding: 2rem 1.5rem;
-  margin: auto;
+  z-index: 1;
+  padding: 0 1.5rem 0.5rem 1.5rem;
   opacity: 1;
   transition: opacity 0.3s ease-in;
-  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+}
+
+.welcome-logo {
+  max-width: 450px;
+  height: auto;
+  opacity: 0.9;
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.3));
 }
 
 .chat-container.expanded .welcome-message {
@@ -171,7 +210,7 @@ body.custom-bg {
   line-height: 1.4;
 }
 
-/* Assistant Message - No bubble, white text, compact padding */
+/* Assistant Message - No bubble, white text with strong shadow, compact padding */
 .assistant-message {
   align-self: stretch;
   max-width: 100%;
@@ -183,7 +222,8 @@ body.custom-bg {
   padding: 0.25rem 0;
   box-shadow: none;
   color: rgba(255, 255, 255, 0.98);
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.9), 0 0 8px rgba(0, 0, 0, 0.6);
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.8));
 }
 
 .message-content {
@@ -424,4 +464,110 @@ body.custom-bg {
   color: rgba(255, 255, 255, 0.9);
   font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
   word-break: break-word;
+}
+
+/* Tool Call Drawer Styles - Minimalist */
+.tool-calls-section {
+  margin: 0.5rem 0 1rem 0;
+}
+
+.tool-calls-header {
+  display: none; /* Remove the header for minimalism */
+}
+
+.tool-call-drawer {
+  margin-bottom: 0.5rem;
+  border: 1px solid rgba(102, 126, 234, 0.4);
+  border-radius: 8px;
+  background: rgba(102, 126, 234, 0.15);
+  overflow: hidden;
+  transition: all 0.2s ease;
+}
+
+.tool-call-drawer:hover {
+  border-color: rgba(102, 126, 234, 0.6);
+  background: rgba(102, 126, 234, 0.2);
+}
+
+.tool-call-drawer-header {
+  padding: 0.65rem 0.85rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.tool-call-drawer-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.tool-call-drawer-icon {
+  color: rgba(102, 206, 234, 0.7);
+  font-size: 0.625rem;
+  width: 10px;
+  display: inline-block;
+  transition: transform 0.2s;
+}
+
+.tool-arguments-inline {
+  display: none; /* Hide inline arguments for minimalism */
+}
+
+.tool-call-drawer-content {
+  padding: 0.75rem 0.85rem;
+  border-top: 1px solid rgba(102, 126, 234, 0.15);
+  background: rgba(0, 0, 0, 0.15);
+  animation: slideDown 0.15s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    max-height: 0;
+  }
+  to {
+    opacity: 1;
+    max-height: 500px;
+  }
+}
+
+.tool-call-section {
+  margin-bottom: 0.75rem;
+}
+
+.tool-call-section:last-child {
+  margin-bottom: 0;
+}
+
+.tool-section-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: rgba(102, 206, 234, 0.8);
+  margin-bottom: 0.4rem;
+}
+
+.tool-arguments-expanded {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+}
+
+.tool-result {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(102, 126, 234, 0.2);
+  border-radius: 4px;
+  padding: 0.5rem;
+  max-height: 250px;
+  overflow-y: auto;
+}
+
+.tool-result pre {
+  margin: 0;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 0.75rem;
+  color: rgba(200, 200, 200, 0.9);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.4;
 }

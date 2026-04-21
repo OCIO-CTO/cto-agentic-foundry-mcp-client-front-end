@@ -1,0 +1,1 @@
+Review the code using the code-quality-pragmatist subagent. Focus on pragmatic improvements and code quality issues in the current codebase.
