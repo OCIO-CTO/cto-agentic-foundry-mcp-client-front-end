@@ -144,6 +144,7 @@ function App() {
       const decoder = new TextDecoder();
       let buffer = '';
       let uiResources = null;
+      let toolCalls = null;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -157,7 +158,15 @@ function App() {
           if (line.startsWith('data: ')) {
             const data = JSON.parse(line.slice(6));
 
-            if (data.type === 'ui_resources') {
+            if (data.type === 'tool_calls') {
+              toolCalls = data.tools;
+              // Display tool call information immediately
+              setMessages(prev => prev.map(msg =>
+                msg.id === assistantMessageId
+                  ? { ...msg, toolCalls: toolCalls }
+                  : msg
+              ));
+            } else if (data.type === 'ui_resources') {
               uiResources = data.resources;
             } else if (data.type === 'content') {
               // Append content chunk to assistant message
@@ -208,6 +217,29 @@ function App() {
                   {message.content}
                 </ReactMarkdown>
               </div>
+
+              {message.toolCalls && (
+                <div className="tool-calls">
+                  {message.toolCalls.map((tool, idx) => (
+                    <div key={idx} className="tool-call">
+                      <div className="tool-call-header">
+                        <span className="tool-icon">🔧</span>
+                        <span className="tool-name">{tool.name}</span>
+                      </div>
+                      {tool.arguments && Object.keys(tool.arguments).length > 0 && (
+                        <div className="tool-arguments">
+                          {Object.entries(tool.arguments).map(([key, value]) => (
+                            <div key={key} className="tool-arg">
+                              <span className="arg-key">{key}:</span>
+                              <span className="arg-value">{JSON.stringify(value)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {message.ui && (
                 <div className="message-ui">

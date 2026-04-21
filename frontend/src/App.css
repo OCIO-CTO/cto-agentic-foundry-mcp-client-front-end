@@ -367,3 +367,61 @@ body.custom-bg {
   backdrop-filter: blur(5px);
   -webkit-backdrop-filter: blur(5px);
 }
+
+/* Tool Call Display */
+.tool-calls {
+  margin-top: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.tool-call {
+  background: linear-gradient(135deg, rgba(102, 126, 234, 0.15) 0%, rgba(80, 100, 220, 0.1) 100%);
+  border: 1px solid rgba(102, 126, 234, 0.3);
+  border-radius: 8px;
+  padding: 0.75rem;
+  margin-bottom: 0.5rem;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.tool-call-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.tool-icon {
+  font-size: 1rem;
+}
+
+.tool-name {
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  color: rgba(102, 206, 234, 1);
+}
+
+.tool-arguments {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-left: 1.5rem;
+  font-size: 0.85rem;
+}
+
+.tool-arg {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.arg-key {
+  color: rgba(255, 255, 255, 0.7);
+  font-weight: 500;
+}
+
+.arg-value {
+  color: rgba(255, 255, 255, 0.9);
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  word-break: break-word;
+}

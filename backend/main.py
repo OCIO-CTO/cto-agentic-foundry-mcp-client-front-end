@@ -1051,9 +1051,20 @@ IMPORTANT: Follow the instructions in the skills above. Use them to guide your r
 
         # Collect UI resources from tool calls
         ui_resources = []
+        tool_call_info = []
 
         # If the model wants to call tools
         if tool_calls:
+            # Store tool call information for streaming
+            for tc in tool_calls:
+                # Use getattr to avoid type checking issues
+                func = getattr(tc, 'function', None)
+                if func:
+                    tool_call_info.append({
+                        'name': func.name,
+                        'arguments': json.loads(func.arguments)
+                    })
+
             # Add the assistant's response to messages
             messages.append({
                 "role": "assistant",
@@ -1101,7 +1112,11 @@ IMPORTANT: Follow the instructions in the skills above. Use them to guide your r
 
             # Stream the final response
             async def generate_stream_with_tools():
-                # Send UI resources first if any
+                # Send tool call information first
+                if tool_call_info:
+                    yield f"data: {json.dumps({'type': 'tool_calls', 'tools': tool_call_info})}\n\n"
+
+                # Send UI resources if any
                 if ui_resources:
                     yield f"data: {json.dumps({'type': 'ui_resources', 'resources': ui_resources})}\n\n"
 
