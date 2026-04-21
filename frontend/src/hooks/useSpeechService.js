@@ -32,9 +32,8 @@ export function useSpeechService() {
       const { token, region } = await fetchToken();
 
       speechConfigRef.current = SpeechSDK.SpeechConfig.fromAuthorizationToken(token, region);
-      // Language will be set when starting recognition
-      // Default to en-US but can be overridden per recognition session
-      speechConfigRef.current.speechRecognitionLanguage = 'en-US';
+      // Language will be automatically detected at start using AutoDetectSourceLanguageConfig
+      // Supporting en-US and es-US as candidate languages
 
       setIsInitialized(true);
       setError(null);
@@ -58,7 +57,7 @@ export function useSpeechService() {
     };
   }, [initializeSpeech]);
 
-  const startRecognition = useCallback(async (onResult, onError, language = 'en-US') => {
+  const startRecognition = useCallback(async (onResult, onError) => {
     if (!isInitialized || !speechConfigRef.current) {
       const err = new Error('Speech service not initialized');
       setError(err.message);
@@ -67,9 +66,13 @@ export function useSpeechService() {
     }
 
     try {
-      // Set the language for this recognition session
-      speechConfigRef.current.speechRecognitionLanguage = language;
-      console.log('Starting recognition with language:', language);
+      // Configure automatic language detection at start
+      // Supports en-US and es-US detection within first 5 seconds of speech
+      const autoDetectSourceLanguageConfig = SpeechSDK.AutoDetectSourceLanguageConfig.fromLanguages([
+        'en-US',
+        'es-US'
+      ]);
+      console.log('Starting recognition with automatic language detection (en-US, es-US)');
 
       // Get the actual microphone device - this is crucial for browser environments
       console.log('Enumerating audio devices...');
@@ -89,14 +92,28 @@ export function useSpeechService() {
         audioConfig = SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
       }
 
-      const recognizer = new SpeechSDK.SpeechRecognizer(speechConfigRef.current, audioConfig);
+      const recognizer = SpeechSDK.SpeechRecognizer.FromConfig(
+        speechConfigRef.current,
+        autoDetectSourceLanguageConfig,
+        audioConfig
+      );
 
       recognizer.recognizing = (s, e) => {
         console.log('Recognizing (interim):', e.result.text);
+        // Log detected language during recognition
+        if (e.result.language) {
+          console.log('Detected language:', e.result.language);
+        }
       };
 
       recognizer.recognized = (s, e) => {
         console.log('Recognition event fired, reason:', e.result.reason);
+
+        // Log the detected language for debugging
+        if (e.result.language) {
+          console.log('Final detected language:', e.result.language);
+        }
+
         if (e.result.reason === SpeechSDK.ResultReason.RecognizedSpeech) {
           console.log('Recognized speech:', e.result.text);
           if (onResult) {
@@ -114,6 +131,11 @@ export function useSpeechService() {
         console.error('Recognition canceled, reason:', e.reason);
         if (e.reason === SpeechSDK.CancellationReason.Error) {
           console.error('Recognition error details:', e.errorDetails);
+
+          // Check if error is related to language detection
+          if (e.errorDetails && e.errorDetails.includes('language')) {
+            console.error('Language detection error - verify candidate languages are supported');
+          }
         }
         setIsRecognizing(false);
         if (e.reason === SpeechSDK.CancellationReason.Error) {

@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useSpeechService } from '../hooks/useSpeechService';
 
-export function VoiceInput({ onTranscript, disabled = false, language = 'en-US' }) {
+export function VoiceInput({ onTranscript, disabled = false }) {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [localError, setLocalError] = useState(null);
@@ -60,7 +60,7 @@ export function VoiceInput({ onTranscript, disabled = false, language = 'en-US' 
         setLocalError(null);
         setTranscript('');
 
-        console.log('Starting speech recognition with Azure SDK, language:', language);
+        console.log('Starting speech recognition with Azure SDK using automatic language detection');
         recognizerRef.current = startRecognition(
           (text) => {
             console.log('Recognition result received:', text);
@@ -81,8 +81,7 @@ export function VoiceInput({ onTranscript, disabled = false, language = 'en-US' 
             console.error('Recognition error:', err);
             setLocalError(err.message || 'Recognition failed');
             setIsListening(false);
-          },
-          language
+          }
         );
 
         if (recognizerRef.current) {

@@ -196,9 +196,18 @@ The application integrates Azure Speech Services for real-time voice interaction
 1. User clicks microphone button in UI
 2. Browser requests microphone permission
 3. Frontend fetches auth token from backend
-4. Azure Speech SDK connects directly to Azure Speech Services
-5. Real-time transcription streams to input field as user speaks
-6. **Important:** When microphone is turned off, the transcribed text remains in the input field ready for submission. User must click "Send" to submit the query.
+4. Azure Speech SDK connects directly to Azure Speech Services with automatic language detection
+5. Language is automatically detected within first 5 seconds (supports en-US and es-US)
+6. Real-time transcription streams to input field as user speaks in detected language
+7. **Important:** When microphone is turned off, the transcribed text remains in the input field ready for submission. User must click "Send" to submit the query.
+
+**Automatic Language Detection:**
+- Uses Azure's at-start language identification (LID)
+- Candidate languages: English (en-US) and Spanish (es-US)
+- Detection occurs within first 5 seconds of speech
+- No user selection required - fully automatic
+- Detected language is logged to browser console for debugging
+- Each new microphone session performs fresh language detection
 
 **Text-to-Speech Flow:**
 1. User clicks speaker icon on assistant message
@@ -370,6 +379,8 @@ No automated tests currently in the codebase. For manual testing:
 - HTTPS required for microphone access in production (localhost exempt)
 - Check browser console for Azure Speech SDK errors
 - Ensure microphone is not being used by another application
+- Verify language detection is working: check console logs for "Detected language: en-US" or "es-US"
+- If speaking languages other than English or Spanish, recognition may fail or be inaccurate
 
 **Text-to-speech not playing:**
 - Check browser console for audio playback errors
