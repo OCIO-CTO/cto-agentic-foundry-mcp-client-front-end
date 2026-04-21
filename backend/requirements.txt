@@ -1,0 +1,5 @@
+fastmcp==3.0.0b1
+fastapi
+uvicorn[standard]
+openai>=1.0.0
+python-dotenv
