@@ -56,7 +56,7 @@ export function useSpeechService() {
     };
   }, [initializeSpeech]);
 
-  const startRecognition = useCallback((onResult, onError) => {
+  const startRecognition = useCallback(async (onResult, onError) => {
     if (!isInitialized || !speechConfigRef.current) {
       const err = new Error('Speech service not initialized');
       setError(err.message);
@@ -65,7 +65,24 @@ export function useSpeechService() {
     }
 
     try {
-      const audioConfig = SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
+      // Get the actual microphone device - this is crucial for browser environments
+      console.log('Enumerating audio devices...');
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const audioInputDevices = devices.filter(device => device.kind === 'audioinput');
+
+      console.log('Found audio input devices:', audioInputDevices.map(d => d.label));
+
+      // Use the default device (first one) or a specific device
+      let audioConfig;
+      if (audioInputDevices.length > 0) {
+        const deviceId = audioInputDevices[0].deviceId;
+        console.log('Using microphone device:', audioInputDevices[0].label, 'ID:', deviceId);
+        audioConfig = SpeechSDK.AudioConfig.fromMicrophoneInput(deviceId);
+      } else {
+        console.log('No specific device found, using default');
+        audioConfig = SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
+      }
+
       const recognizer = new SpeechSDK.SpeechRecognizer(speechConfigRef.current, audioConfig);
 
       recognizer.recognizing = (s, e) => {

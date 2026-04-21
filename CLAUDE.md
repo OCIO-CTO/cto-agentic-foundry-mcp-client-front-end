@@ -12,11 +12,13 @@ MCP Proxy Server application that demonstrates Azure OpenAI integration with Fas
 React Frontend (Port 3001)
     |
     | HTTP POST /chat (SSE streaming)
+    | Azure Speech SDK (real-time STT/TTS)
     |
 FastMCP Backend (Port 8001)
     |
     |-- FastMCP 3.0 Server (proxies to remote MCP server)
     |-- Azure OpenAI (GPT-4o) (agentic loop with tool calling)
+    |-- Azure Speech Services (token generation for frontend)
     |-- Remote FSIS MCP Server (search and fetch tools)
 ```
 
@@ -36,6 +38,7 @@ python main.py
 **Environment Setup:**
 - Copy `backend/.env.example` to `backend/.env`
 - Configure Azure OpenAI credentials (AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_DEPLOYMENT)
+- Configure Azure Speech Services credentials (AZURE_SPEECH_KEY, AZURE_SPEECH_REGION)
 - Set REMOTE_MCP_URL for the remote MCP server to proxy
 
 ### Frontend
@@ -129,6 +132,41 @@ System prompts are defined as FastMCP prompts (`@mcp.prompt`) and fetched dynami
 
 Tools from the remote MCP server are cached on startup to avoid repeated fetches. Cache is global (`tools_cache`).
 
+### 6. Azure Speech Services Integration
+
+The application integrates Azure Speech Services for real-time voice interaction:
+
+**Backend Components:**
+- [backend/speech_service.py](backend/speech_service.py) - Speech synthesis and token generation
+- Backend endpoints at [backend/main.py](backend/main.py):
+  - `GET /api/speech/token` - Generates short-lived tokens (10min) for frontend SDK
+  - `POST /api/speech/synthesize` - Text-to-speech synthesis
+  - `WS /api/speech/recognize` - WebSocket fallback for speech-to-text
+
+**Frontend Components:**
+- [frontend/src/hooks/useSpeechService.js](frontend/src/hooks/useSpeechService.js) - Speech SDK integration hook
+- [frontend/src/components/VoiceInput.jsx](frontend/src/components/VoiceInput.jsx) - Microphone input component
+- [frontend/src/components/TextToSpeech.jsx](frontend/src/components/TextToSpeech.jsx) - Audio playback component
+
+**Speech-to-Text Flow:**
+1. User clicks microphone button in UI
+2. Browser requests microphone permission
+3. Frontend fetches auth token from backend
+4. Azure Speech SDK connects directly to Azure Speech Services
+5. Real-time transcription streams to input field as user speaks
+6. **Important:** When microphone is turned off, the transcribed text remains in the input field ready for submission. User must click "Send" to submit the query.
+
+**Text-to-Speech Flow:**
+1. User clicks speaker icon on assistant message
+2. Frontend uses Azure Speech SDK to synthesize audio
+3. Audio plays directly in browser
+
+**Security:**
+- Speech key never exposed to frontend
+- Backend generates short-lived tokens (10min expiry)
+- Token endpoint has rate limiting
+- CORS restrictions on all speech endpoints
+
 ## Frontend Architecture
 
 ### State Management
@@ -168,6 +206,8 @@ The frontend reads SSE streams using `ReadableStream` API and updates UI in real
 - `AZURE_OPENAI_API_KEY`: Azure OpenAI API key (required)
 - `AZURE_OPENAI_ENDPOINT`: Azure OpenAI endpoint (required)
 - `AZURE_OPENAI_DEPLOYMENT`: Model deployment name (default: gpt-4o)
+- `AZURE_SPEECH_KEY`: Azure Speech Services key (required for voice features)
+- `AZURE_SPEECH_REGION`: Azure Speech Services region (e.g., usgovvirginia)
 - `REMOTE_MCP_URL`: Remote MCP server URL (default: FSIS server)
 - `PORT`: Backend port (default: 8000)
 - `CORS_ORIGINS`: Allowed CORS origins (comma-separated)
@@ -258,3 +298,16 @@ No automated tests currently in the codebase. For manual testing:
 **Rate limiting:**
 - Adjust RATE_LIMIT environment variable
 - Check client IP in backend logs
+
+**Speech recognition not working:**
+- Ensure browser has microphone permissions granted
+- Check AZURE_SPEECH_KEY and AZURE_SPEECH_REGION are set correctly
+- Verify backend /api/speech/token endpoint is accessible
+- HTTPS required for microphone access in production (localhost exempt)
+- Check browser console for Azure Speech SDK errors
+- Ensure microphone is not being used by another application
+
+**Text-to-speech not playing:**
+- Check browser console for audio playback errors
+- Verify Azure Speech Services credentials in backend
+- Check browser audio permissions and volume settings

@@ -67,6 +67,13 @@ export function VoiceInput({ onTranscript, disabled = false }) {
             setTranscript(prev => {
               const newTranscript = prev ? `${prev} ${text}` : text;
               console.log('Updated transcript:', newTranscript);
+
+              // Update parent component in real-time
+              if (onTranscript) {
+                console.log('Calling onTranscript in real-time with:', newTranscript);
+                onTranscript(newTranscript);
+              }
+
               return newTranscript;
             });
           },
@@ -133,12 +140,6 @@ export function VoiceInput({ onTranscript, disabled = false }) {
           )}
         </svg>
       </button>
-
-      {isListening && transcript && (
-        <div className="voice-input-transcript">
-          {transcript}
-        </div>
-      )}
 
       {displayError && (
         <div className="voice-input-error-message">
